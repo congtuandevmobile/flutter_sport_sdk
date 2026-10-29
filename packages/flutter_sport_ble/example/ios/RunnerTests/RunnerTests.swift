@@ -1,4 +1,5 @@
 import Flutter
+import SensorCore
 import XCTest
 
 @testable import flutter_sport_ble
@@ -10,10 +11,15 @@ private final class FakeTransport: BleTransport {
     var disconnects: [String] = []
     var scans = 0
     var scanStops = 0
+    var lastScanServices: [String]? = []
+    var lastNotify: [String] = []
+    var lastRead: [String] = []
     func adapterState() -> NativeAdapterState { state }
-    func startScan(serviceShortIds: [String]) { scans += 1 }
+    func startScan(serviceShortIds: [String]?) { scans += 1; lastScanServices = serviceShortIds }
     func stopScan() { scanStops += 1 }
-    func connect(deviceId: String, measurementShortIds: [String]) { connects.append(deviceId) }
+    func connect(deviceId: String, notify: [String], read: [String]) {
+        connects.append(deviceId); lastNotify = notify; lastRead = read
+    }
     func disconnect(deviceId: String) { disconnects.append(deviceId) }
 }
 
@@ -39,13 +45,18 @@ final class RunnerTests: XCTestCase {
             connectTimeout: connectTimeout, snapshotEvery: snapshotEvery)
     }
 
-    /// Connects `id` and reports the link up; returns the outcome of the connect call.
+    /// A device that connects, discovers `services` and subscribes to `subscribed` (by default the measurement of each service).
     @discardableResult
-    private func link(_ e: SportBleEngine, _ id: String, _ services: [String]) -> Result<Void, Error>? {
+    private func link(
+        _ e: SportBleEngine, _ id: String, _ services: [String], subscribed: [String]? = nil, failed: [String] = []
+    ) -> Result<Void, Error>? {
         var result: Result<Void, Error>?
         e.connect(deviceId: id) { result = $0 }
         e.flush()
-        e.onConnected(id: id, name: "dev-\(id)", serviceShortIds: services)
+        e.onGattConnected(id: id)
+        e.onServicesDiscovered(id: id, name: "dev-\(id)", serviceShortIds: services)
+        let defaults: [String: String] = ["180d": "2a37", "1814": "2a53", "1816": "2a5b", "1818": "2a63", "1826": "2ad2"]
+        e.onReady(id: id, subscribed: subscribed ?? services.compactMap { defaults[$0] }, failed: failed)
         e.flush()
         return result
     }
@@ -62,7 +73,7 @@ final class RunnerTests: XCTestCase {
 
     func testScanForwardsDevicesWithTheirCapabilities() {
         let e = makeEngine()
-        e.startScan(timeoutMs: 10_000)
+        e.startScan(timeoutMs: 10_000, allDevices: false)
         e.flush()
         e.onDeviceFound(id: "A", name: "Strap", rssi: -60, serviceShortIds: ["180d", "180f"])
         e.flush()
@@ -73,7 +84,7 @@ final class RunnerTests: XCTestCase {
 
     func testAScanStopsByItselfAfterItsTimeout() {
         let e = makeEngine()
-        e.startScan(timeoutMs: 50)
+        e.startScan(timeoutMs: 50, allDevices: false)
         let stopped = expectation(description: "scan stopped")
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.4) { e.flush(); stopped.fulfill() }
         wait(for: [stopped], timeout: 3)
@@ -86,7 +97,7 @@ final class RunnerTests: XCTestCase {
         guard case .success? = link(e, "A", ["180d"]) else { return XCTFail("connect did not succeed") }
         XCTAssertEqual(transport.connects, ["A"])
         let state = e.snapshot().devices.first
-        XCTAssertEqual(state?.connection, .connected)
+        XCTAssertEqual(state?.connection, .ready)
         XCTAssertEqual(state?.epoch, 1)
         XCTAssertEqual(state?.capabilities, [.heartRate])
     }
@@ -202,7 +213,9 @@ final class RunnerTests: XCTestCase {
         e.connect(deviceId: "A") { second = $0 }
         e.flush()
         guard case .failure? = second else { return XCTFail("expected a failure") }
-        e.onConnected(id: "A", name: nil, serviceShortIds: ["180d"])
+        e.onGattConnected(id: "A")
+        e.onServicesDiscovered(id: "A", name: nil, serviceShortIds: ["180d"])
+        e.onReady(id: "A", subscribed: ["2a37"], failed: [])
         e.flush()
         var third: Result<Void, Error>?
         e.connect(deviceId: "A") { third = $0 }
@@ -254,6 +267,134 @@ final class RunnerTests: XCTestCase {
         e.stop()
         e.flush()
         XCTAssertGreaterThanOrEqual(sink.snapshots.count, 3)
+    }
+
+    // MARK: - wave 0
+
+    func testScanCanLookAtEveryBleDeviceOrOnlyAtTheServicesOfTheRegistry() {
+        let e = makeEngine()
+        e.startScan(timeoutMs: 5_000, allDevices: false)
+        e.flush()
+        XCTAssertEqual(transport.lastScanServices ?? [], ["180d", "1814", "1816", "1818", "1826"])
+        e.startScan(timeoutMs: 5_000, allDevices: true)
+        e.flush()
+        XCTAssertNil(transport.lastScanServices, "nil means every BLE device")
+    }
+
+    func testConnectUsesTheRegistryForWhatToSubscribeAndRead() {
+        let e = makeEngine()
+        e.connect(deviceId: "A") { _ in }
+        e.flush()
+        for c in ["2a37", "2a53", "2a5b", "2a63", "2ad2"] { XCTAssertTrue(transport.lastNotify.contains(c), c) }
+        for c in ["2a19", "2a29"] { XCTAssertTrue(transport.lastRead.contains(c), c) }
+    }
+
+    func testTheStatesGoThroughDiscoveringAndSubscribingBeforeReady() {
+        let e = makeEngine()
+        e.connect(deviceId: "A") { _ in }
+        e.flush()
+        XCTAssertEqual(e.snapshot().devices.first?.connection, .connecting)
+        e.onGattConnected(id: "A"); e.flush()
+        XCTAssertEqual(e.snapshot().devices.first?.connection, .discovering)
+        e.onServicesDiscovered(id: "A", name: "Strap", serviceShortIds: ["180d"]); e.flush()
+        XCTAssertEqual(e.snapshot().devices.first?.connection, .subscribing)
+        e.onReady(id: "A", subscribed: ["2a37"], failed: []); e.flush()
+        let d = e.snapshot().devices.first
+        XCTAssertEqual(d?.connection, .ready)
+        XCTAssertEqual(d?.discoveredServices, ["180d"])
+        XCTAssertEqual(d?.subscribedCharacteristics, ["2a37"])
+    }
+
+    func testAConnectionWithoutAWorkoutMeasurementIsNotReadyAndSaysWhy() {
+        let e = makeEngine()
+        let r = link(e, "A", ["180f", "180a"], subscribed: ["2a19"])
+        guard case .failure(let error)? = r, let failure = error as? SportBleError else { return XCTFail("expected a failure") }
+        XCTAssertEqual(failure.code, "NOT_SUPPORTED")
+        let d = e.snapshot().devices.first
+        XCTAssertEqual(d?.connection, .notSupported)
+        XCTAssertEqual(d?.capabilities, [.battery, .deviceInformation])
+        XCTAssertEqual(transport.disconnects, ["A"], "the useless link is closed")
+    }
+
+    func testASubscriptionThatFailedIsReportedAndNeverSilentlySkipped() {
+        let e = makeEngine()
+        let none = link(e, "A", ["180d"], subscribed: [], failed: ["2a37"])
+        guard case .failure? = none else { return XCTFail("expected a failure") }
+        XCTAssertTrue(e.snapshot().devices.first { $0.id == "A" }?.error?.contains("2a37") == true)
+        let some = link(e, "B", ["1814", "180d"], subscribed: ["2a53"], failed: ["2a37"])
+        guard case .success? = some else { return XCTFail("expected success") }
+        let b = e.snapshot().devices.first { $0.id == "B" }
+        XCTAssertEqual(b?.connection, .ready)
+        XCTAssertEqual(b?.error?.hasPrefix("PARTIAL"), true)
+    }
+
+    func testAStaleNotificationDuringANewAttemptIsDropped() {
+        let e = makeEngine()
+        link(e, "strap", ["180d"])
+        hr(e, "strap", 145, at: 0)
+        hr(e, "strap", 146, at: 1000)
+        e.onDisconnected(id: "strap", error: nil); e.flush()
+        e.connect(deviceId: "strap") { _ in }; e.flush()
+        e.onNotification(id: "strap", characteristicShortId: "2a37", bytes: Data([0x00, 190])); e.flush()
+        e.onGattConnected(id: "strap")
+        e.onServicesDiscovered(id: "strap", name: nil, serviceShortIds: ["180d"])
+        e.onReady(id: "strap", subscribed: ["2a37"], failed: [])
+        e.flush()
+        XCTAssertNil(metric(e.snapshot(), .heartRate))
+        XCTAssertEqual(e.snapshot().devices.first?.epoch, 2)
+    }
+
+    func testADeviceThatIsNotSupportedDoesNotBlockAnother() {
+        let e = makeEngine()
+        link(e, "battery-only", ["180f"], subscribed: ["2a19"])
+        link(e, "strap", ["180d"])
+        hr(e, "strap", 145, at: 0)
+        hr(e, "strap", 146, at: 1000)
+        let s = e.snapshot()
+        XCTAssertEqual(metric(s, .heartRate)?.value, 146)
+        XCTAssertEqual(s.devices.first { $0.id == "battery-only" }?.connection, .notSupported)
+        XCTAssertEqual(s.devices.first { $0.id == "strap" }?.connection, .ready)
+    }
+
+    func testBatteryDeviceInformationAndRrIntervalsReachTheSnapshot() {
+        let e = makeEngine()
+        link(e, "strap", ["180d", "180f", "180a"], subscribed: ["2a37", "2a19"])
+        e.onNotification(id: "strap", characteristicShortId: "2a19", bytes: Data([82]))
+        e.onNotification(id: "strap", characteristicShortId: "2a29", bytes: Data("Polar".utf8))
+        e.onNotification(id: "strap", characteristicShortId: "2a24", bytes: Data("H10".utf8))
+        e.onNotification(id: "strap", characteristicShortId: "2a26", bytes: Data("3.0.35".utf8))
+        e.onNotification(id: "strap", characteristicShortId: "2a37", bytes: Data([0x16, 70, 0x00, 0x04, 0x00, 0x02]))
+        e.flush()
+        let d = e.snapshot().devices.first
+        XCTAssertEqual(d?.batteryPercent, 82)
+        XCTAssertEqual(d?.manufacturer, "Polar")
+        XCTAssertEqual(d?.model, "H10")
+        XCTAssertEqual(d?.firmware, "3.0.35")
+        XCTAssertEqual(d?.recentRrMs, [1000, 500])
+    }
+
+    func testTheWheelCircumferenceTurnsWheelRevolutionsIntoSpeed() {
+        let e = makeEngine()
+        link(e, "wheel", ["1816"])
+        e.setWheelCircumference(deviceId: "wheel", metres: 2.1)
+        e.flush()
+        for (i, count) in [1000, 1002, 1004, 1006].enumerated() {
+            clock = Int64(i) * 1000
+            let ticks = i * 1024
+            e.onNotification(
+                id: "wheel", characteristicShortId: "2a5b",
+                bytes: Data([0x01, UInt8(count & 0xFF), UInt8(count >> 8), 0, 0, UInt8(ticks & 0xFF), UInt8(ticks >> 8)]))
+            e.flush()
+        }
+        XCTAssertEqual(metric(e.snapshot(), .cyclingSpeed)?.value ?? 0, 4.2, accuracy: 1e-6)
+    }
+
+    func testEveryMetricOfTheCoreHasItsPigeonTwinWithTheSameOrder() {
+        // the engine maps metrics by ordinal: a drift between the two enums must fail here
+        XCTAssertEqual(MetricType.values().size, Int32(NativeMetric.floors.rawValue + 1))
+        XCTAssertEqual(Capability.values().size, Int32(NativeCapability.deviceInformation.rawValue + 1))
+        XCTAssertEqual(MetricType.cyclingCadence.ordinal, Int32(NativeMetric.cyclingCadence.rawValue))
+        XCTAssertEqual(MetricType.floors.ordinal, Int32(NativeMetric.floors.rawValue))
     }
 
     /// The Pigeon enums mirror the core's by ORDER (the iOS engine maps by ordinal): a drift must fail here.

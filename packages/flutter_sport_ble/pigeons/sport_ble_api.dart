@@ -26,20 +26,43 @@ enum NativeAdapterState {
 
 enum NativeConnection {
   disconnected,
+
+  /// The link is being made.
   connecting,
-  connected,
+
+  /// The link is up and the services are being discovered.
+  discovering,
+
+  /// The services are known and the measurements are being subscribed.
+  subscribing,
+
+  /// Subscribed to at least one workout measurement: the sensor can give metrics.
+  ready,
+
+  /// The link works but the device has no workout measurement this package can use (or none could be subscribed).
+  notSupported,
 
   /// The last attempt failed or the link was lost with an error (see `NativeDeviceState.error`).
   failed,
 }
 
-/// Order matches `sensor.model.MetricType` of the shared core.
+/// Order matches `sensor.model.MetricType` of the shared core (a test of each native engine fails if it drifts).
 enum NativeMetric {
   heartRate,
   runningSpeed,
   runningCadence,
   runningStrideLength,
   totalDistance,
+  cyclingCadence,
+  powerWatts,
+  cyclingSpeed,
+  incline,
+  energyKcal,
+  strokeRate,
+  strokeCount,
+  wheelRevolutions,
+  stepRate,
+  floors,
 }
 
 enum NativeKind { instantaneous, cumulative }
@@ -78,8 +101,15 @@ class NativeDeviceState {
     required this.connection,
     required this.epoch,
     required this.capabilities,
+    required this.discoveredServices,
+    required this.subscribedCharacteristics,
+    required this.recentRrMs,
     this.name,
     this.error,
+    this.manufacturer,
+    this.model,
+    this.firmware,
+    this.batteryPercent,
   });
 
   String id;
@@ -89,7 +119,24 @@ class NativeDeviceState {
   /// Grows with every new connection to the device: data of an older one is never mixed with a newer one.
   int epoch;
   List<NativeCapability> capabilities;
+
+  /// 16-bit service numbers found on the device (4 lowercase hex digits), once discovered.
+  List<String> discoveredServices;
+
+  /// 16-bit characteristic numbers that are subscribed.
+  List<String> subscribedCharacteristics;
+
+  /// R-R intervals (ms) of the latest heart rate notification that had some; empty when none.
+  List<int> recentRrMs;
   String? error;
+
+  /// Read once from Device Information, when the device has it.
+  String? manufacturer;
+  String? model;
+  String? firmware;
+
+  /// The device's own battery level (0 to 100), when it has the Battery service. Per device: never resolved between devices.
+  int? batteryPercent;
 }
 
 class NativeResolvedMetric {
@@ -121,8 +168,8 @@ class NativeSensorSnapshot {
   int updatedAtMs;
 }
 
-/// A notification of a characteristic the core does not decode (for instance the Cycling Speed and Cadence Measurement),
-/// handed over so that whoever decodes it can use it.
+/// A notification the host may want untouched (the Cycling Speed and Cadence Measurement, which `flutter_tracking_gps` can
+/// also decode), handed over besides being decoded here.
 class NativeRawPacket {
   NativeRawPacket({
     required this.deviceId,
@@ -145,9 +192,10 @@ class NativeRawPacket {
 abstract class SportBleHostApi {
   NativeAdapterState adapterState();
 
-  /// Scans for devices that advertise a sport service (heart rate, running or cycling speed and cadence). Stops by itself
-  /// after [timeoutMs].
-  void startScan(int timeoutMs);
+  /// Scans for devices that advertise a sport service known to the core. With [allDevices] it scans EVERY BLE device (a device
+  /// may not advertise its services): what it can do is only known after connecting. Stops by itself after [timeoutMs]; never
+  /// scan for everything for long, and not in the background.
+  void startScan(int timeoutMs, bool allDevices);
 
   void stopScan();
 
@@ -162,6 +210,10 @@ abstract class SportBleHostApi {
 
   /// The device the user prefers for [metric] (null clears it). Only used while that device has a healthy value.
   void setPreferredSource(NativeMetric metric, String? deviceId);
+
+  /// The wheel circumference in metres (0.5 to 3.0; null clears it) of a cycling wheel sensor: without it the wheel gives
+  /// revolutions but no speed. Applies from the next connection of the device too.
+  void setWheelCircumference(String deviceId, double? metres);
 
   NativeSensorSnapshot snapshot();
 }

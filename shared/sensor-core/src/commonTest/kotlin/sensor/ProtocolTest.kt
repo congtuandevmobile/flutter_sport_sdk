@@ -5,6 +5,7 @@ import sensor.model.MeasurementKind
 import sensor.model.MetricType
 import sensor.protocol.Gatt
 import sensor.protocol.HeartRateParser
+import sensor.protocol.ProtocolRegistry
 import sensor.protocol.RunningSpeedCadenceParser
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -118,7 +119,6 @@ class ProtocolTest {
     @Test fun capabilitiesComeFromTheServices() {
         val caps = Gatt.capabilities(listOf("0000180D-0000-1000-8000-00805F9B34FB", "1814", "1814", "dead"))
         assertEquals(listOf(Capability.HEART_RATE, Capability.RUNNING_SPEED_CADENCE), caps)
-        assertEquals(listOf("2a37"), Gatt.measurementCharacteristics("180d"))
-        assertTrue(Gatt.measurementCharacteristics("180f").isEmpty())
+        assertTrue(ProtocolRegistry.notifyCharacteristics().containsAll(listOf("2a37", "2a53", "2a5b", "2a63", "2ad2")))
     }
 }

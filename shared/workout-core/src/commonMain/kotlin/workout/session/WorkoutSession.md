@@ -1,0 +1,5 @@
+# WorkoutSession.kt
+
+**Path:** `.../workout/session/WorkoutSession.kt` · **Layer:** session
+
+One workout: the state machine, the active and paused time and the `DistanceLedger`. It owns the state of the SESSION; a sensor connection is not part of it, so a sensor connected between two workouts never puts old data in the new one, and a lost sensor never stops the clock. `start`, `pause`, `resume`, `finish` (an invalid transition does nothing and returns no event), `onCounter`, `onSpeed`, `setPreferredSource`, `tick`, `snapshot(nowMs)`; every call returns the events it caused. Samples before `start` or after `finish` are ignored. `WorkoutSession.restore(events)` rebuilds a session from its events in any order and with duplicates (an already applied sequence number is ignored); a session that was RUNNING when the process died comes back PAUSED at its last event, the time since is NOT activity, no distance is invented, and `recoveryEvents` (a Paused) are to be appended to the journal. Baselines are never restored: every source starts a new one.

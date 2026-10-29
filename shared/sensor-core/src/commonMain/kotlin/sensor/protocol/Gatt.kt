@@ -14,9 +14,24 @@ object Gatt {
     const val CYCLING_SPEED_CADENCE_SERVICE = "1816"
     const val CSC_MEASUREMENT = "2a5b"
     const val CYCLING_POWER_SERVICE = "1818"
+    const val CYCLING_POWER_MEASUREMENT = "2a63"
     const val FITNESS_MACHINE_SERVICE = "1826"
     const val BATTERY_SERVICE = "180f"
     const val DEVICE_INFORMATION_SERVICE = "180a"
+    const val BATTERY_LEVEL = "2a19"
+    const val MANUFACTURER_NAME = "2a29"
+    const val MODEL_NUMBER = "2a24"
+    const val FIRMWARE_REVISION = "2a26"
+    const val HARDWARE_REVISION = "2a27"
+    const val SOFTWARE_REVISION = "2a28"
+
+    // Fitness Machine Service (0x1826) data characteristics
+    const val TREADMILL_DATA = "2acd"
+    const val CROSS_TRAINER_DATA = "2ace"
+    const val STEP_CLIMBER_DATA = "2acf"
+    const val STAIR_CLIMBER_DATA = "2ad0"
+    const val ROWER_DATA = "2ad1"
+    const val INDOOR_BIKE_DATA = "2ad2"
 
     private const val SIG_BASE_SUFFIX = "-0000-1000-8000-00805f9b34fb"
 
@@ -43,13 +58,5 @@ object Gatt {
             }
         }
         return out.toList()
-    }
-
-    /** The characteristics the core can decode (the native layer subscribes to these). */
-    fun measurementCharacteristics(serviceUuid: String): List<String> = when (short(serviceUuid)) {
-        HEART_RATE_SERVICE -> listOf(HEART_RATE_MEASUREMENT)
-        RUNNING_SPEED_CADENCE_SERVICE -> listOf(RSC_MEASUREMENT)
-        CYCLING_SPEED_CADENCE_SERVICE -> listOf(CSC_MEASUREMENT) // forwarded raw: not decoded here
-        else -> emptyList()
     }
 }

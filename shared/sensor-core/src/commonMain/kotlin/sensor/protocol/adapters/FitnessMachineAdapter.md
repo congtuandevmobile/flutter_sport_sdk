@@ -1,0 +1,5 @@
+# FitnessMachineAdapter.kt
+
+**Path:** `.../sensor/protocol/adapters/FitnessMachineAdapter.kt` · **Layer:** protocol adapter
+
+READ-ONLY telemetry of the Fitness Machine Service: treadmill 0x2ACD, cross trainer 0x2ACE, step climber 0x2ACF, stair climber 0x2AD0, rower 0x2AD1, indoor bike 0x2AD2. The control point is never touched. Each characteristic starts with flags and lists its fields in a fixed order; the parser reads every field the flags announce (so a later field is never misaligned) and rejects a truncated packet whole. Bit 0 "more data" 0 means the first field IS present. Metrics: treadmill speed (RUNNING_SPEED), bike speed, cadence (0.5/min) and power, rower stroke rate and count, distance (cumulative), incline, energy (cumulative, 0xFFFF = not available), heart rate, step rate, floors. LIMITS: written from the specification and golden packets, never captured from a device; the Resistance Level field size (taken as 2 bytes) and the step and stair climber layouts need a real machine.

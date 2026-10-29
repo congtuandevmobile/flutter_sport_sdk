@@ -2,4 +2,4 @@
 
 **Path:** `.../sensor/model/SensorModel.kt` · **Layer:** model
 
-`MetricType` (what a reading measures, fixed units: heart rate bpm, running speed m/s, running cadence per minute, stride length m, total distance m), `MeasurementKind` (INSTANTANEOUS, or CUMULATIVE for a device counter), `SensorReading(metric, value, kind)` and `Capability` (what a device exposes, decided from its GATT services). The order of `MetricType` and `Capability` is mirrored by the Pigeon enums of `flutter_sport_ble`; a test of that package must fail if one drifts.
+`MetricType` (what a reading measures, fixed units; ONLY APPEND, the Pigeon enum of `flutter_sport_ble` mirrors the order and a test of each engine fails on drift), `MeasurementKind` (INSTANTANEOUS, or CUMULATIVE for a device counter), `SensorReading`, `Capability`, `DeviceInfoField`, and `SensorEvent`: `Measurement` (a number the resolver can choose), `RrIntervals`, `DeviceInfo` and `Battery` (structured data kept per device, never resolved between devices). `DeviceDetails` is what the hub knows about a device besides its metrics.

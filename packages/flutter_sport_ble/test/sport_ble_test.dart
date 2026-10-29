@@ -12,7 +12,7 @@ class FakeHost extends SportBleHostApi {
   @override
   Future<NativeAdapterState> adapterState() async => NativeAdapterState.poweredOff;
   @override
-  Future<void> startScan(int timeoutMs) async => calls.add('scan:$timeoutMs');
+  Future<void> startScan(int timeoutMs, bool allDevices) async => calls.add('scan:$timeoutMs:$allDevices');
   @override
   Future<void> stopScan() async => calls.add('stopScan');
   @override
@@ -29,6 +29,8 @@ class FakeHost extends SportBleHostApi {
   Future<void> setPreferredSource(NativeMetric metric, String? deviceId) async =>
       calls.add('prefer:${metric.name}:$deviceId');
   @override
+  Future<void> setWheelCircumference(String deviceId, double? metres) async => calls.add('wheel:$deviceId:$metres');
+  @override
   Future<NativeSensorSnapshot> snapshot() async => _native();
 }
 
@@ -40,12 +42,27 @@ NativeSensorSnapshot _native() => NativeSensorSnapshot(
     NativeResolvedMetric(metric: NativeMetric.totalDistance, value: 4000.5, sourceId: 'foot', kind: NativeKind.cumulative, ageMs: 900),
   ],
   devices: [
-    NativeDeviceState(id: 'strap', connection: NativeConnection.connected, epoch: 2, capabilities: [NativeCapability.heartRate]),
+    NativeDeviceState(
+      id: 'strap',
+      connection: NativeConnection.ready,
+      epoch: 2,
+      capabilities: [NativeCapability.heartRate, NativeCapability.battery],
+      discoveredServices: ['180d', '180f'],
+      subscribedCharacteristics: ['2a37'],
+      recentRrMs: [1000, 500],
+      manufacturer: 'Polar',
+      model: 'H10',
+      firmware: '3.0.35',
+      batteryPercent: 82,
+    ),
     NativeDeviceState(
       id: 'foot',
       connection: NativeConnection.failed,
       epoch: 1,
       capabilities: [NativeCapability.runningSpeedCadence, NativeCapability.battery],
+      discoveredServices: [],
+      subscribedCharacteristics: [],
+      recentRrMs: [],
       error: 'GATT_8: lost',
       name: 'Footpod',
     ),
@@ -67,14 +84,16 @@ void main() {
 
   test('calls reach native with their arguments', () async {
     await ble.startScan(timeout: const Duration(seconds: 5));
+    await ble.startScan(timeout: const Duration(seconds: 2), allDevices: true);
     await ble.stopScan();
     await ble.connect('A');
     await ble.disconnect('A');
     await ble.forget('A');
     await ble.setPreferredSource(SportMetric.runningCadence, 'foot');
     await ble.setPreferredSource(SportMetric.heartRate, null);
+    await ble.setWheelCircumference('wheel', 2.1);
     expect(host.calls, [
-      'scan:5000', 'stopScan', 'connect:A', 'disconnect:A', 'forget:A', 'prefer:runningCadence:foot', 'prefer:heartRate:null',
+      'scan:5000:false', 'scan:2000:true', 'stopScan', 'connect:A', 'disconnect:A', 'forget:A', 'prefer:runningCadence:foot', 'prefer:heartRate:null', 'wheel:wheel:2.1',
     ]);
     expect(await ble.adapterState(), BleAdapterState.poweredOff);
   });
@@ -89,7 +108,15 @@ void main() {
     expect(s[SportMetric.heartRate]!.sourceId, 'strap');
     expect(s[SportMetric.heartRate]!.age, const Duration(milliseconds: 200));
     expect(s.updatedAtMs, 1234);
-    expect(s.connectedDevices.map((d) => d.id), ['strap']);
+    expect(s.readyDevices.map((d) => d.id), ['strap']);
+    final strap = s.devices.firstWhere((d) => d.id == 'strap');
+    expect(strap.batteryPercent, 82);
+    expect(strap.manufacturer, 'Polar');
+    expect(strap.model, 'H10');
+    expect(strap.firmware, '3.0.35');
+    expect(strap.recentRrMs, [1000, 500]);
+    expect(strap.discoveredServices, ['180d', '180f']);
+    expect(strap.subscribedCharacteristics, ['2a37']);
     final foot = s.devices.firstWhere((d) => d.id == 'foot');
     expect(foot.connection, BleConnectionState.failed);
     expect(foot.error, 'GATT_8: lost');
@@ -127,6 +154,12 @@ void main() {
       ble.connect('A'),
       throwsA(isA<SportBleException>().having((e) => e.code, 'code', 'TIMEOUT')),
     );
+  });
+
+  test('every native metric and capability has its Dart twin in the same order', () {
+    expect(SportMetric.values.map((m) => m.name), NativeMetric.values.map((m) => m.name));
+    expect(SensorCapability.values.map((m) => m.name), NativeCapability.values.map((m) => m.name));
+    expect(BleConnectionState.values.map((m) => m.name), NativeConnection.values.map((m) => m.name));
   });
 
   test('the empty snapshot has nothing', () {

@@ -1,0 +1,29 @@
+name: flutter_workout
+description: "A workout session for Flutter: state machine, one distance from counters and speeds (no double counting across pause, reconnect or source switch), and a durable journal that survives the process dying."
+version: 0.0.1-beta
+repository: https://github.com/congtuandevmobile/flutter_sport_sdk
+resolution: workspace
+
+environment:
+  sdk: ^3.10.7
+  flutter: '>=3.3.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  meta: ^1.17.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  pigeon: ^26.1.7
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: io.github.congtuandevmobile.flutter_workout
+        pluginClass: FlutterWorkoutPlugin
+      ios:
+        pluginClass: FlutterWorkoutPlugin

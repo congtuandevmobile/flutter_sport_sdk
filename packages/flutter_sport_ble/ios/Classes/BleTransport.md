@@ -2,4 +2,4 @@
 
 **Path:** `ios/Classes/BleTransport.swift` · **Layer:** native boundary
 
-The radio as the engine sees it (same contract as the Android `BleTransport`): `adapterState`, `startScan`, `stopScan`, `connect`, `disconnect`, and a listener (`onDeviceFound`, `onScanFinished`, `onConnected`, `onNotification`, `onDisconnected`). Callbacks may come from any thread; the engine hops to its own queue.
+Same contract as the Android `BleTransport`: `adapterState`, `startScan(serviceShortIds:)` (nil scans every BLE device), `stopScan`, `connect(deviceId:notify:read:)` and a listener with `onDeviceFound`, `onScanFinished`, `onGattConnected`, `onServicesDiscovered`, `onReady(subscribed:failed:)`, `onNotification` (notifications and one-time reads) and `onDisconnected`. Callbacks may come from any thread; the engine hops to its own queue.

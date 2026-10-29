@@ -7,12 +7,13 @@ protocol BleTransport: AnyObject {
 
     func adapterState() -> NativeAdapterState
 
-    /// Starts a scan for devices that advertise one of `serviceShortIds` (4 lowercase hex digits).
-    func startScan(serviceShortIds: [String])
+    /// Starts a scan for devices that advertise one of `serviceShortIds` (4 lowercase hex digits); nil scans EVERY BLE device.
+    func startScan(serviceShortIds: [String]?)
     func stopScan()
 
-    /// Connects, discovers the services, subscribes to `measurementShortIds`, then reports `onConnected`.
-    func connect(deviceId: String, measurementShortIds: [String])
+    /// Connects, discovers the services, subscribes to the characteristics of `notify` that the device has and, after `onReady`,
+    /// reads once the ones of `read` that it has (their value comes through `onNotification`).
+    func connect(deviceId: String, notify: [String], read: [String])
     func disconnect(deviceId: String)
 }
 
@@ -21,10 +22,17 @@ protocol BleTransportListener: AnyObject {
     func onDeviceFound(id: String, name: String?, rssi: Int, serviceShortIds: [String])
     func onScanFinished()
 
-    /// The link is up, the services were discovered and the notifications are on.
-    func onConnected(id: String, name: String?, serviceShortIds: [String])
+    /// The link is up; the services are being discovered.
+    func onGattConnected(id: String)
 
-    /// A notification of a subscribed characteristic (`characteristicShortId` is 4 lowercase hex digits).
+    /// The services are known; the subscriptions start.
+    func onServicesDiscovered(id: String, name: String?, serviceShortIds: [String])
+
+    /// Every subscription was tried: `subscribed` notify now, `failed` are characteristics the device has but that could not be
+    /// subscribed. Both may be empty: that is "connected, not usable".
+    func onReady(id: String, subscribed: [String], failed: [String])
+
+    /// A notification (or a read) of a characteristic (`characteristicShortId` is 4 lowercase hex digits).
     func onNotification(id: String, characteristicShortId: String, bytes: Data)
 
     /// The link ended or could not be made; `error` is nil for a disconnect the engine asked for.

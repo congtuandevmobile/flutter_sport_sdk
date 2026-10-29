@@ -4,11 +4,14 @@ PODS:
     - Flutter
   - flutter_tracking_gps (0.0.1-beta.3):
     - Flutter
+  - flutter_workout (0.0.1-beta):
+    - Flutter
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
   - flutter_sport_ble (from `.symlinks/plugins/flutter_sport_ble/ios`)
   - flutter_tracking_gps (from `.symlinks/plugins/flutter_tracking_gps/ios`)
+  - flutter_workout (from `.symlinks/plugins/flutter_workout/ios`)
 
 EXTERNAL SOURCES:
   Flutter:
@@ -17,11 +20,14 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/flutter_sport_ble/ios"
   flutter_tracking_gps:
     :path: ".symlinks/plugins/flutter_tracking_gps/ios"
+  flutter_workout:
+    :path: ".symlinks/plugins/flutter_workout/ios"
 
 SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   flutter_sport_ble: 60bae6bd95ff961638b83d8fdbf055fa8415d7c7
   flutter_tracking_gps: 3a3a3f4e553bab5ee8345ccb9d590e6ab84826ec
+  flutter_workout: d8ff78c3b50f8b785c3cefe0aaa5b2ee8188ae4f
 
 PODFILE CHECKSUM: e30f02f9d1c72c47bb6344a0a748c9d268180865
 

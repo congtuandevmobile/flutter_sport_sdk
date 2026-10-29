@@ -24,16 +24,12 @@ final class SportBleEngine: BleTransportListener {
         var name: String?
         var connection: NativeConnection = .disconnected
         var capabilities: [NativeCapability] = []
+        var services: [String] = []
+        var subscribed: [String] = []
         var error: String?
         var pending: ((Result<Void, Error>) -> Void)?
         var timeout: DispatchWorkItem?
     }
-
-    static let scanServices = ["180d", "1814", "1816"]
-    /// Subscribed to after connecting: every measurement the core decodes, plus the CSC one that is forwarded.
-    static let measurements = ["2a37", "2a53", "2a5b"]
-    /// Characteristics the core does not decode: their bytes go to the host.
-    static let rawForwarded: Set<String> = ["2a5b"]
 
     let queue: DispatchQueue
     private let transport: BleTransport
@@ -92,7 +88,8 @@ final class SportBleEngine: BleTransportListener {
 
     // MARK: - Calls from the host
 
-    func startScan(timeoutMs: Int64) {
+    /// `allDevices` scans every BLE device; otherwise only the services of the registry. Both stop after `timeoutMs`.
+    func startScan(timeoutMs: Int64, allDevices: Bool) {
         queue.async { [weak self] in
             guard let self = self else { return }
             self.scanTimeout?.cancel()
@@ -103,7 +100,7 @@ final class SportBleEngine: BleTransportListener {
             self.scanTimeout = work
             self.queue.asyncAfter(deadline: .now() + .milliseconds(Int(timeoutMs)), execute: work)
         }
-        transport.startScan(serviceShortIds: Self.scanServices)
+        transport.startScan(serviceShortIds: allDevices ? nil : ProtocolRegistry.shared.scanServices())
     }
 
     func stopScan() {
@@ -115,19 +112,23 @@ final class SportBleEngine: BleTransportListener {
         queue.async { [weak self] in self?.sink?.onScanStopped() }
     }
 
-    /// Connects; `done` runs once: when the link is up and subscribed, or when it failed.
+    /// Connects; `done` runs once: when the device is READY, or when it failed or is NOT_SUPPORTED.
     func connect(deviceId id: String, done: @escaping (Result<Void, Error>) -> Void) {
         queue.async { [weak self] in
             guard let self = self else { return }
             let device = self.device(id)
-            if device.connection == .connected { done(.success(())); return }
-            if device.connection == .connecting {
+            switch device.connection {
+            case .ready: done(.success(())); return
+            case .connecting, .discovering, .subscribing:
                 done(.failure(SportBleError(code: "CONNECT_FAILED", message: "already connecting")))
                 return
+            default: break
             }
             device.epoch += 1
             device.connection = .connecting
             device.error = nil
+            device.services = []
+            device.subscribed = []
             device.pending = done
             let timeout = DispatchWorkItem { [weak self] in
                 self?.failPending(id, error: "TIMEOUT: the device did not answer in time", disconnect: true)
@@ -136,7 +137,9 @@ final class SportBleEngine: BleTransportListener {
             self.queue.asyncAfter(deadline: .now() + self.connectTimeout, execute: timeout)
             _ = self.hub.onConnection(sourceId: id, epoch: device.epoch, connected: false)
             self.publish()
-            self.transport.connect(deviceId: id, measurementShortIds: Self.measurements)
+            self.transport.connect(
+                deviceId: id, notify: ProtocolRegistry.shared.notifyCharacteristics(),
+                read: ProtocolRegistry.shared.readCharacteristics())
         }
     }
 
@@ -161,6 +164,12 @@ final class SportBleEngine: BleTransportListener {
             self.order.removeAll { $0 == id }
             self.hub.forget(sourceId: id)
             self.publish()
+        }
+    }
+
+    func setWheelCircumference(deviceId: String, metres: Double?) {
+        queue.async { [weak self] in
+            self?.hub.setWheelCircumference(sourceId: deviceId, metres: metres.map { KotlinDouble(value: $0) })
         }
     }
 
@@ -190,18 +199,54 @@ final class SportBleEngine: BleTransportListener {
         }
     }
 
-    func onConnected(id: String, name: String?, serviceShortIds: [String]) {
+    func onGattConnected(id: String) {
         queue.async { [weak self] in
             guard let self = self, let device = self.devices[id], device.connection == .connecting else { return }
-            device.connection = .connected
+            device.connection = .discovering
+            self.publish()
+        }
+    }
+
+    func onServicesDiscovered(id: String, name: String?, serviceShortIds: [String]) {
+        queue.async { [weak self] in
+            guard let self = self, let device = self.devices[id] else { return }
+            guard device.connection == .connecting || device.connection == .discovering else { return }
+            device.connection = .subscribing
             device.name = name ?? device.name
+            device.services = serviceShortIds
             device.capabilities = self.capabilities(serviceShortIds)
+            self.hub.setCapabilities(sourceId: id, capabilities: Gatt.shared.capabilities(serviceUuids: serviceShortIds))
+            // Notifications can start the moment a subscription is on: the hub must already know the link.
+            _ = self.hub.onConnection(sourceId: id, epoch: device.epoch, connected: true)
+            self.publish()
+        }
+    }
+
+    func onReady(id: String, subscribed: [String], failed: [String]) {
+        queue.async { [weak self] in
+            guard let self = self, let device = self.devices[id], device.connection == .subscribing else { return }
             device.timeout?.cancel()
             let done = device.pending
             device.pending = nil
-            _ = self.hub.onConnection(sourceId: id, epoch: device.epoch, connected: true)
+            device.subscribed = subscribed
+            var result: Result<Void, Error> = .success(())
+            var unsupported = false
+            if subscribed.contains(where: { ProtocolRegistry.shared.isWorkoutCharacteristic(characteristic: $0) }) {
+                device.connection = .ready
+                if !failed.isEmpty { device.error = "PARTIAL: could not subscribe to \(failed.joined(separator: ", "))" }
+            } else {
+                unsupported = true
+                device.connection = .notSupported
+                let message = failed.isEmpty
+                    ? "NOT_SUPPORTED: the device has no workout measurement this package can use"
+                    : "NOT_SUPPORTED: could not subscribe to \(failed.joined(separator: ", "))"
+                device.error = message
+                result = .failure(SportBleError(code: "NOT_SUPPORTED", message: message))
+                _ = self.hub.onConnection(sourceId: id, epoch: device.epoch, connected: false)
+            }
+            if unsupported { self.transport.disconnect(deviceId: id) }
             self.publish()
-            done?(.success(()))
+            done?(result)
         }
     }
 
@@ -209,11 +254,12 @@ final class SportBleEngine: BleTransportListener {
         // The receipt time is taken NOW, before the hop: a notification that waits in the queue keeps its time.
         let now = monotonicMs()
         queue.async { [weak self] in
-            guard let self = self, let device = self.devices[id], device.connection == .connected else { return }
-            let kotlinBytes = Self.kotlinBytes(bytes)
+            guard let self = self, let device = self.devices[id] else { return }
+            guard device.connection == .ready || device.connection == .subscribing else { return }
             _ = self.hub.onPacket(
-                sourceId: id, epoch: device.epoch, characteristic: characteristicShortId, bytes: kotlinBytes, nowMs: now)
-            if Self.rawForwarded.contains(characteristicShortId) {
+                sourceId: id, epoch: device.epoch, characteristic: characteristicShortId,
+                bytes: Self.kotlinBytes(bytes), nowMs: now)
+            if ProtocolRegistry.shared.rawForwarded().contains(characteristicShortId) {
                 self.sink?.onRawPacket(NativeRawPacket(
                     deviceId: id, epoch: device.epoch, characteristic: characteristicShortId,
                     data: FlutterStandardTypedData(bytes: bytes), receivedAtMs: now))
@@ -224,11 +270,14 @@ final class SportBleEngine: BleTransportListener {
     func onDisconnected(id: String, error: String?) {
         queue.async { [weak self] in
             guard let self = self, let device = self.devices[id], device.connection != .disconnected else { return }
+            if device.connection == .notSupported && error == nil { return } // we closed it ourselves
             device.timeout?.cancel()
             let done = device.pending
             device.pending = nil
-            device.connection = error != nil ? .failed : .disconnected
-            device.error = error
+            if device.connection != .notSupported {
+                device.connection = error != nil ? .failed : .disconnected
+                device.error = error
+            }
             _ = self.hub.onConnection(sourceId: id, epoch: device.epoch, connected: false)
             self.publish()
             done?(.failure(SportBleError(code: Self.code(of: error), message: error ?? "disconnected")))
@@ -246,7 +295,7 @@ final class SportBleEngine: BleTransportListener {
     }
 
     private func failPending(_ id: String, error: String, disconnect: Bool) {
-        guard let device = devices[id], device.connection == .connecting else { return }
+        guard let device = devices[id], [.connecting, .discovering, .subscribing].contains(device.connection) else { return }
         let done = device.pending
         device.pending = nil
         device.connection = .failed
@@ -268,8 +317,13 @@ final class SportBleEngine: BleTransportListener {
         }
         let states: [NativeDeviceState] = order.compactMap { id in
             guard let d = devices[id] else { return nil }
+            let details = hub.details(sourceId: id)
             return NativeDeviceState(
-                id: id, name: d.name, connection: d.connection, epoch: d.epoch, capabilities: d.capabilities, error: d.error)
+                id: id, name: d.name, connection: d.connection, epoch: d.epoch, capabilities: d.capabilities,
+                discoveredServices: d.services, subscribedCharacteristics: d.subscribed,
+                recentRrMs: details.recentRrMs.map { Int64(truncating: $0) }, error: d.error,
+                manufacturer: details.manufacturer, model: details.model, firmware: details.firmware,
+                batteryPercent: details.batteryPercent.map { Int64(truncating: $0) })
         }
         return NativeSensorSnapshot(metrics: metrics, devices: states, updatedAtMs: now)
     }
@@ -285,6 +339,16 @@ final class SportBleEngine: BleTransportListener {
         case .runningCadence: return .runningCadence
         case .runningStrideLength: return .runningStrideLength
         case .totalDistance: return .totalDistance
+        case .cyclingCadence: return .cyclingCadence
+        case .powerWatts: return .powerWatts
+        case .cyclingSpeed: return .cyclingSpeed
+        case .incline: return .incline
+        case .energyKcal: return .energyKcal
+        case .strokeRate: return .strokeRate
+        case .strokeCount: return .strokeCount
+        case .wheelRevolutions: return .wheelRevolutions
+        case .stepRate: return .stepRate
+        case .floors: return .floors
         }
     }
 

@@ -12,12 +12,13 @@ abstract class SportBlePlatform {
   Stream<RawPacket> get rawPackets;
 
   Future<BleAdapterState> adapterState();
-  Future<void> startScan(Duration timeout);
+  Future<void> startScan(Duration timeout, {bool allDevices = false});
   Future<void> stopScan();
   Future<void> connect(String deviceId);
   Future<void> disconnect(String deviceId);
   Future<void> forget(String deviceId);
   Future<void> setPreferredSource(SportMetric metric, String? deviceId);
+  Future<void> setWheelCircumference(String deviceId, double? metres);
   Future<SensorSnapshot> snapshot();
 }
 
@@ -83,7 +84,8 @@ class PigeonSportBlePlatform implements SportBlePlatform, SportBleFlutterApi {
   };
 
   @override
-  Future<void> startScan(Duration timeout) => _api.startScan(timeout.inMilliseconds);
+  Future<void> startScan(Duration timeout, {bool allDevices = false}) =>
+      _api.startScan(timeout.inMilliseconds, allDevices);
 
   @override
   Future<void> stopScan() => _api.stopScan();
@@ -106,6 +108,9 @@ class PigeonSportBlePlatform implements SportBlePlatform, SportBleFlutterApi {
   @override
   Future<void> setPreferredSource(SportMetric metric, String? deviceId) =>
       _api.setPreferredSource(NativeMetric.values[metric.index], deviceId);
+
+  @override
+  Future<void> setWheelCircumference(String deviceId, double? metres) => _api.setWheelCircumference(deviceId, metres);
 
   @override
   Future<SensorSnapshot> snapshot() async => _snapshot(await _api.snapshot());
@@ -132,12 +137,22 @@ class PigeonSportBlePlatform implements SportBlePlatform, SportBleFlutterApi {
           connection: switch (d.connection) {
             NativeConnection.disconnected => BleConnectionState.disconnected,
             NativeConnection.connecting => BleConnectionState.connecting,
-            NativeConnection.connected => BleConnectionState.connected,
+            NativeConnection.discovering => BleConnectionState.discovering,
+            NativeConnection.subscribing => BleConnectionState.subscribing,
+            NativeConnection.ready => BleConnectionState.ready,
+            NativeConnection.notSupported => BleConnectionState.notSupported,
             NativeConnection.failed => BleConnectionState.failed,
           },
           epoch: d.epoch,
           capabilities: _capabilities(d.capabilities),
+          discoveredServices: d.discoveredServices,
+          subscribedCharacteristics: d.subscribedCharacteristics,
+          recentRrMs: d.recentRrMs,
           error: d.error,
+          manufacturer: d.manufacturer,
+          model: d.model,
+          firmware: d.firmware,
+          batteryPercent: d.batteryPercent,
         ),
     ],
     updatedAtMs: s.updatedAtMs,

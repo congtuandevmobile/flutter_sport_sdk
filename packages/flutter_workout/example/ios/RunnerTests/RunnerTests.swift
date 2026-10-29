@@ -1,0 +1,254 @@
+import Flutter
+import WorkoutCore
+import XCTest
+
+@testable import flutter_workout
+
+private final class MemoryStore: WorkoutJournalStore {
+    var files: [String: [String]] = [:]
+    var activeId: String?
+    var failAppends = false
+    func append(sessionId: String, lines: [String]) throws {
+        if failAppends { throw NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "disk full"]) }
+        files[sessionId, default: []].append(contentsOf: lines)
+    }
+    func read(sessionId: String) throws -> [String] { files[sessionId] ?? [] }
+    func clear(sessionId: String) throws { files[sessionId] = nil; if activeId == sessionId { activeId = nil } }
+    func activeSessionId() -> String? { activeId }
+    func setActive(_ sessionId: String?) throws { activeId = sessionId }
+    var totalLines: Int { files.values.reduce(0) { $0 + $1.count } }
+}
+
+private final class RecordingSink: WorkoutSink {
+    private let store: MemoryStore
+    var snapshots: [NativeWorkoutSnapshot] = []
+    var linesAtPublish: [Int] = []
+    init(_ store: MemoryStore) { self.store = store }
+    func onSnapshot(_ snapshot: NativeWorkoutSnapshot) { snapshots.append(snapshot); linesAtPublish.append(store.totalLines) }
+}
+
+final class RunnerTests: XCTestCase {
+    private var clock: Int64 = 1_000
+    private let store = MemoryStore()
+    private lazy var sink = RecordingSink(store)
+    private let foot = NativeSourceRef(id: "footpod", kind: .counter)
+    private let speed = NativeSourceRef(id: "foot-speed", kind: .speed)
+
+    private func makeEngine(_ s: MemoryStore? = nil, _ k: RecordingSink? = nil, snapshotEvery: TimeInterval = 1) -> WorkoutEngine {
+        WorkoutEngine(store: s ?? store, sink: k ?? sink, monotonicMs: { self.clock }, snapshotEvery: snapshotEvery)
+    }
+
+    private func counter(_ e: WorkoutEngine, _ meters: Double, id: String = "w1", source: NativeSourceRef? = nil, epoch: Int64 = 1, age: Int64 = 0) {
+        e.submitCounter(sessionId: id, source: source ?? foot, epoch: epoch, meters: meters, ageMs: age)
+        e.flush()
+    }
+
+    func testStartWritesTheFirstLineBeforeItReturns() throws {
+        let e = makeEngine()
+        let snap = try e.start(sessionId: "w1", mode: .indoorRunning)
+        XCTAssertEqual(snap.state, .running)
+        XCTAssertEqual(store.files["w1"]?.count, 1)
+        XCTAssertEqual(store.activeSessionId(), "w1")
+    }
+
+    func testANumberIsNeverShownBeforeItIsOnTheDisk() throws {
+        let e = makeEngine()
+        _ = try e.start(sessionId: "w1", mode: .indoorRunning)
+        counter(e, 0)
+        clock += 3000
+        counter(e, 10)
+        XCTAssertEqual(sink.snapshots.last?.distanceMeters ?? 0, 10, accuracy: 1e-9)
+        XCTAssertTrue(store.files["w1"]?.contains { $0.contains("|D|") } == true)
+        XCTAssertEqual(sink.linesAtPublish.last, store.totalLines)
+    }
+
+    func testPauseAndResumeNeverCreditThePausedDistance() throws {
+        let e = makeEngine()
+        _ = try e.start(sessionId: "w1", mode: .indoorRunning)
+        counter(e, 0)
+        clock += 10_000; counter(e, 30)
+        _ = try e.pause(sessionId: "w1")
+        clock += 60_000; counter(e, 530)
+        _ = try e.resume(sessionId: "w1")
+        clock += 1000; counter(e, 531)
+        clock += 3000; counter(e, 534)
+        XCTAssertEqual(e.snapshot().distanceMeters, 33, accuracy: 1e-9)
+    }
+
+    func testASecondStartWhileOneIsOpenIsRefused() throws {
+        let e = makeEngine()
+        _ = try e.start(sessionId: "w1", mode: .indoorRunning)
+        XCTAssertThrowsError(try e.start(sessionId: "w2", mode: .indoorRunning)) { error in
+            XCTAssertEqual((error as? WorkoutError)?.code, "SESSION_OPEN")
+        }
+        _ = try e.finish(sessionId: "w1")
+        _ = try e.start(sessionId: "w2", mode: .indoorRunning)
+    }
+
+    func testSamplesAndCommandsOfAnotherSessionAreDropped() throws {
+        let e = makeEngine()
+        _ = try e.start(sessionId: "w1", mode: .indoorRunning)
+        counter(e, 0, id: "other")
+        clock += 3000
+        counter(e, 50, id: "other")
+        XCTAssertEqual(e.snapshot().distanceMeters, 0)
+        XCTAssertThrowsError(try e.pause(sessionId: "other")) { XCTAssertEqual(($0 as? WorkoutError)?.code, "NO_SESSION") }
+    }
+
+    func testASampleIsStampedWithItsRealTimeNotTheTimeOfTheCall() throws {
+        let e = makeEngine()
+        _ = try e.start(sessionId: "w1", mode: .indoorRunning)
+        clock = 6_000
+        e.submitSpeed(sessionId: "w1", source: speed, epoch: 1, mps: 3, ageMs: 4_000); e.flush()
+        clock = 7_000
+        e.submitSpeed(sessionId: "w1", source: speed, epoch: 1, mps: 3, ageMs: 4_000); e.flush()
+        XCTAssertEqual(e.snapshot().distanceMeters, 3, accuracy: 1e-9)
+    }
+
+    func testAFailedWriteIsReportedAndStickyButTheWorkoutGoesOn() throws {
+        let e = makeEngine()
+        _ = try e.start(sessionId: "w1", mode: .indoorRunning)
+        counter(e, 0)
+        store.failAppends = true
+        clock += 3000; counter(e, 10)
+        var s = e.snapshot()
+        XCTAssertTrue(s.journalFailed)
+        XCTAssertEqual(s.error?.hasPrefix("JOURNAL_WRITE_FAILED"), true)
+        XCTAssertEqual(s.distanceMeters, 10, accuracy: 1e-9)
+        store.failAppends = false
+        clock += 3000; counter(e, 20)
+        s = e.snapshot()
+        XCTAssertTrue(s.journalFailed, "sticky")
+    }
+
+    func testAWorkoutThatCannotWriteItsFirstLineIsNotStarted() {
+        store.failAppends = true
+        let e = makeEngine()
+        XCTAssertThrowsError(try e.start(sessionId: "w1", mode: .indoorRunning)) {
+            XCTAssertEqual(($0 as? WorkoutError)?.code, "JOURNAL_WRITE_FAILED")
+        }
+        XCTAssertEqual(e.snapshot().state, .idle)
+    }
+
+    /// A workout that ran and whose process "died": the engine is simply dropped.
+    private func runWorkoutAndDie() throws -> Double {
+        let e = makeEngine()
+        _ = try e.start(sessionId: "w1", mode: .indoorRunning)
+        counter(e, 100)
+        for i in 1...4 { clock += 10_000; counter(e, 100 + Double(i) * 30) }
+        return e.snapshot().distanceMeters
+    }
+
+    func testARestoredWorkoutComesBackPausedWithItsDistanceAndNothingInvented() throws {
+        let distance = try runWorkoutAndDie()
+        XCTAssertEqual(store.activeSessionId(), "w1")
+        clock += 3_600_000
+        let e2 = makeEngine(store, RecordingSink(store))
+        let snap = try e2.restore(sessionId: "w1")
+        XCTAssertEqual(snap.state, .paused)
+        XCTAssertEqual(snap.distanceMeters, distance, accuracy: 1e-9)
+        XCTAssertEqual(snap.restoreStatus, .intact)
+        XCTAssertEqual(snap.activeMs, 40_000, "the hour the process was dead is not activity")
+        XCTAssertEqual(snap.distanceSource?.kind, .counter)
+        _ = try e2.resume(sessionId: "w1")
+        counter(e2, 1000)
+        clock += 3000; counter(e2, 1010)
+        XCTAssertEqual(e2.snapshot().distanceMeters, distance + 10, accuracy: 1e-9)
+    }
+
+    func testRestoringTwiceDoesNotReplayAgainAndIsIdempotent() throws {
+        let distance = try runWorkoutAndDie()
+        let e2 = makeEngine()
+        let first = try e2.restore(sessionId: "w1")
+        let after = store.files["w1"]?.count
+        let second = try e2.restore(sessionId: "w1")
+        XCTAssertEqual(store.files["w1"]?.count, after, "no second replay, no second Paused line")
+        XCTAssertEqual(first.distanceMeters, second.distanceMeters)
+        XCTAssertEqual(second.distanceMeters, distance, accuracy: 1e-9)
+        let e3 = makeEngine()
+        XCTAssertEqual(try e3.restore(sessionId: "w1").distanceMeters, distance, accuracy: 1e-9)
+    }
+
+    func testARebootThatRestartedTheMonotonicClockLowerStillAllowsAResume() throws {
+        _ = try runWorkoutAndDie()
+        clock = 500
+        let e2 = makeEngine()
+        _ = try e2.restore(sessionId: "w1")
+        let resumed = try e2.resume(sessionId: "w1")
+        XCTAssertEqual(resumed.state, .running)
+        clock += 5_000
+        XCTAssertEqual(e2.snapshot().activeMs, 45_000)
+    }
+
+    func testACutLastLineIsRepairedAndADamagedMiddleKeepsOnlyThePrefix() throws {
+        _ = try runWorkoutAndDie()
+        var lines = store.files["w1"]!
+        lines[lines.count - 1] = String(lines.last!.dropLast(7))
+        store.files["w1"] = lines
+        XCTAssertEqual(try makeEngine().restore(sessionId: "w1").restoreStatus, .tailRepaired)
+        store.files["w1"]![3] = store.files["w1"]![3].replacingOccurrences(of: "|", with: "#")
+        XCTAssertEqual(try makeEngine().restore(sessionId: "w1").restoreStatus, .partial)
+    }
+
+    func testAnUnknownOrEmptyJournalIsNotRestorable() {
+        XCTAssertThrowsError(try makeEngine().restore(sessionId: "nope")) {
+            XCTAssertEqual(($0 as? WorkoutError)?.code, "NOT_RESTORABLE")
+        }
+    }
+
+    func testAFinishedWorkoutClearsTheActivePointerAndRestoresAsFinished() throws {
+        let e = makeEngine()
+        _ = try e.start(sessionId: "w1", mode: .indoorRunning)
+        _ = try e.finish(sessionId: "w1")
+        XCTAssertNil(e.activeSessionId())
+        XCTAssertEqual(try makeEngine().restore(sessionId: "w1").state, .finished)
+        XCTAssertNil(store.activeSessionId())
+    }
+
+    func testClearSessionDeletesTheJournalButNotAnOpenWorkout() throws {
+        let e = makeEngine()
+        _ = try e.start(sessionId: "w1", mode: .indoorRunning)
+        XCTAssertThrowsError(try e.clearSession(sessionId: "w1")) { XCTAssertEqual(($0 as? WorkoutError)?.code, "SESSION_OPEN") }
+        _ = try e.finish(sessionId: "w1")
+        try e.clearSession(sessionId: "w1")
+        XCTAssertNil(store.files["w1"])
+        XCTAssertEqual(e.snapshot().state, .idle)
+    }
+
+    func testTheSnapshotIsPublishedPeriodically() throws {
+        let e = makeEngine(snapshotEvery: 0.05)
+        _ = try e.start(sessionId: "w1", mode: .indoorRunning)
+        e.startTicker()
+        let waited = expectation(description: "ticks")
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.4) { waited.fulfill() }
+        wait(for: [waited], timeout: 3)
+        e.stopTicker()
+        XCTAssertGreaterThanOrEqual(sink.snapshots.count, 4)
+    }
+
+    func testEveryModeStateAndSourceKindOfTheCoreHasItsPigeonTwinInTheSameOrder() {
+        XCTAssertEqual(WorkoutMode.values().size, Int32(NativeWorkoutMode.indoorCycling.rawValue + 1))
+        XCTAssertEqual(WorkoutMode.indoorRunning.ordinal, Int32(NativeWorkoutMode.indoorRunning.rawValue))
+        XCTAssertEqual(WorkoutState.paused.ordinal, Int32(NativeWorkoutState.paused.rawValue))
+        XCTAssertEqual(WorkoutState.finished.ordinal, Int32(NativeWorkoutState.finished.rawValue))
+        XCTAssertEqual(DistanceSourceKind.speed.ordinal, Int32(NativeSourceKind.speed.rawValue))
+        XCTAssertEqual(DistanceSourceKind.counter.ordinal, Int32(NativeSourceKind.counter.rawValue))
+    }
+
+    func testTheFileStoreAppendsReadsClearsAndKeepsTheActivePointer() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("wf-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let s = FileWorkoutJournalStore(dir: dir)
+        try s.append(sessionId: "a/b c", lines: ["one", "two"])
+        try s.append(sessionId: "a/b c", lines: ["three"])
+        XCTAssertEqual(try s.read(sessionId: "a/b c"), ["one", "two", "three"])
+        XCTAssertEqual(try s.read(sessionId: "missing"), [])
+        try s.append(sessionId: "a_b_c", lines: ["x"])
+        XCTAssertEqual(try s.read(sessionId: "a/b c"), ["one", "two", "three"])
+        try s.setActive("a/b c")
+        XCTAssertEqual(s.activeSessionId(), "a/b c")
+        try s.clear(sessionId: "a/b c")
+        XCTAssertEqual(try s.read(sessionId: "a/b c"), [])
+        XCTAssertNil(s.activeSessionId())
+    }
+}

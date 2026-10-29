@@ -1,0 +1,34 @@
+name: flutter-packages
+on:
+  push:
+    paths: ['packages/**', 'examples/**', 'pubspec.yaml', '.github/workflows/flutter-packages.yml']
+  pull_request:
+    paths: ['packages/**', 'examples/**', 'pubspec.yaml', '.github/workflows/flutter-packages.yml']
+jobs:
+  dart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable }
+      - run: flutter pub get
+      - name: flutter_sport_ble
+        working-directory: packages/flutter_sport_ble
+        run: |
+          flutter analyze
+          flutter test
+      - name: flutter_workout
+        working-directory: packages/flutter_workout
+        run: |
+          flutter analyze
+          flutter test
+      - name: flutter_tracking_gps
+        working-directory: packages/flutter_tracking_gps
+        run: |
+          flutter analyze
+          flutter test
+      - name: sensors_demo
+        working-directory: examples/sensors_demo
+        run: |
+          flutter analyze
+          flutter test

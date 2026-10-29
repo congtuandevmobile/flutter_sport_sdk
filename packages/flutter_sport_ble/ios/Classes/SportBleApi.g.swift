@@ -191,19 +191,37 @@ enum NativeAdapterState: Int {
 
 enum NativeConnection: Int {
   case disconnected = 0
+  /// The link is being made.
   case connecting = 1
-  case connected = 2
+  /// The link is up and the services are being discovered.
+  case discovering = 2
+  /// The services are known and the measurements are being subscribed.
+  case subscribing = 3
+  /// Subscribed to at least one workout measurement: the sensor can give metrics.
+  case ready = 4
+  /// The link works but the device has no workout measurement this package can use (or none could be subscribed).
+  case notSupported = 5
   /// The last attempt failed or the link was lost with an error (see `NativeDeviceState.error`).
-  case failed = 3
+  case failed = 6
 }
 
-/// Order matches `sensor.model.MetricType` of the shared core.
+/// Order matches `sensor.model.MetricType` of the shared core (a test of each native engine fails if it drifts).
 enum NativeMetric: Int {
   case heartRate = 0
   case runningSpeed = 1
   case runningCadence = 2
   case runningStrideLength = 3
   case totalDistance = 4
+  case cyclingCadence = 5
+  case powerWatts = 6
+  case cyclingSpeed = 7
+  case incline = 8
+  case energyKcal = 9
+  case strokeRate = 10
+  case strokeCount = 11
+  case wheelRevolutions = 12
+  case stepRate = 13
+  case floors = 14
 }
 
 enum NativeKind: Int {
@@ -278,7 +296,19 @@ struct NativeDeviceState: Hashable {
   /// Grows with every new connection to the device: data of an older one is never mixed with a newer one.
   var epoch: Int64
   var capabilities: [NativeCapability]
+  /// 16-bit service numbers found on the device (4 lowercase hex digits), once discovered.
+  var discoveredServices: [String]
+  /// 16-bit characteristic numbers that are subscribed.
+  var subscribedCharacteristics: [String]
+  /// R-R intervals (ms) of the latest heart rate notification that had some; empty when none.
+  var recentRrMs: [Int64]
   var error: String? = nil
+  /// Read once from Device Information, when the device has it.
+  var manufacturer: String? = nil
+  var model: String? = nil
+  var firmware: String? = nil
+  /// The device's own battery level (0 to 100), when it has the Battery service. Per device: never resolved between devices.
+  var batteryPercent: Int64? = nil
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -288,7 +318,14 @@ struct NativeDeviceState: Hashable {
     let connection = pigeonVar_list[2] as! NativeConnection
     let epoch = pigeonVar_list[3] as! Int64
     let capabilities = pigeonVar_list[4] as! [NativeCapability]
-    let error: String? = nilOrValue(pigeonVar_list[5])
+    let discoveredServices = pigeonVar_list[5] as! [String]
+    let subscribedCharacteristics = pigeonVar_list[6] as! [String]
+    let recentRrMs = pigeonVar_list[7] as! [Int64]
+    let error: String? = nilOrValue(pigeonVar_list[8])
+    let manufacturer: String? = nilOrValue(pigeonVar_list[9])
+    let model: String? = nilOrValue(pigeonVar_list[10])
+    let firmware: String? = nilOrValue(pigeonVar_list[11])
+    let batteryPercent: Int64? = nilOrValue(pigeonVar_list[12])
 
     return NativeDeviceState(
       id: id,
@@ -296,7 +333,14 @@ struct NativeDeviceState: Hashable {
       connection: connection,
       epoch: epoch,
       capabilities: capabilities,
-      error: error
+      discoveredServices: discoveredServices,
+      subscribedCharacteristics: subscribedCharacteristics,
+      recentRrMs: recentRrMs,
+      error: error,
+      manufacturer: manufacturer,
+      model: model,
+      firmware: firmware,
+      batteryPercent: batteryPercent
     )
   }
   func toList() -> [Any?] {
@@ -306,14 +350,21 @@ struct NativeDeviceState: Hashable {
       connection,
       epoch,
       capabilities,
+      discoveredServices,
+      subscribedCharacteristics,
+      recentRrMs,
       error,
+      manufacturer,
+      model,
+      firmware,
+      batteryPercent,
     ]
   }
   static func == (lhs: NativeDeviceState, rhs: NativeDeviceState) -> Bool {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return deepEqualsSportBleApi(lhs.id, rhs.id) && deepEqualsSportBleApi(lhs.name, rhs.name) && deepEqualsSportBleApi(lhs.connection, rhs.connection) && deepEqualsSportBleApi(lhs.epoch, rhs.epoch) && deepEqualsSportBleApi(lhs.capabilities, rhs.capabilities) && deepEqualsSportBleApi(lhs.error, rhs.error)
+    return deepEqualsSportBleApi(lhs.id, rhs.id) && deepEqualsSportBleApi(lhs.name, rhs.name) && deepEqualsSportBleApi(lhs.connection, rhs.connection) && deepEqualsSportBleApi(lhs.epoch, rhs.epoch) && deepEqualsSportBleApi(lhs.capabilities, rhs.capabilities) && deepEqualsSportBleApi(lhs.discoveredServices, rhs.discoveredServices) && deepEqualsSportBleApi(lhs.subscribedCharacteristics, rhs.subscribedCharacteristics) && deepEqualsSportBleApi(lhs.recentRrMs, rhs.recentRrMs) && deepEqualsSportBleApi(lhs.error, rhs.error) && deepEqualsSportBleApi(lhs.manufacturer, rhs.manufacturer) && deepEqualsSportBleApi(lhs.model, rhs.model) && deepEqualsSportBleApi(lhs.firmware, rhs.firmware) && deepEqualsSportBleApi(lhs.batteryPercent, rhs.batteryPercent)
   }
 
   func hash(into hasher: inout Hasher) {
@@ -323,7 +374,14 @@ struct NativeDeviceState: Hashable {
     deepHashSportBleApi(value: connection, hasher: &hasher)
     deepHashSportBleApi(value: epoch, hasher: &hasher)
     deepHashSportBleApi(value: capabilities, hasher: &hasher)
+    deepHashSportBleApi(value: discoveredServices, hasher: &hasher)
+    deepHashSportBleApi(value: subscribedCharacteristics, hasher: &hasher)
+    deepHashSportBleApi(value: recentRrMs, hasher: &hasher)
     deepHashSportBleApi(value: error, hasher: &hasher)
+    deepHashSportBleApi(value: manufacturer, hasher: &hasher)
+    deepHashSportBleApi(value: model, hasher: &hasher)
+    deepHashSportBleApi(value: firmware, hasher: &hasher)
+    deepHashSportBleApi(value: batteryPercent, hasher: &hasher)
   }
 }
 
@@ -422,8 +480,8 @@ struct NativeSensorSnapshot: Hashable {
   }
 }
 
-/// A notification of a characteristic the core does not decode (for instance the Cycling Speed and Cadence Measurement),
-/// handed over so that whoever decodes it can use it.
+/// A notification the host may want untouched (the Cycling Speed and Cadence Measurement, which `flutter_tracking_gps` can
+/// also decode), handed over besides being decoded here.
 ///
 /// Generated class from Pigeon that represents data sent in messages.
 struct NativeRawPacket: Hashable {
@@ -582,9 +640,10 @@ class SportBleApiPigeonCodec: FlutterStandardMessageCodec, @unchecked Sendable {
 /// Generated protocol from Pigeon that represents a handler of messages from Flutter.
 protocol SportBleHostApi {
   func adapterState() throws -> NativeAdapterState
-  /// Scans for devices that advertise a sport service (heart rate, running or cycling speed and cadence). Stops by itself
-  /// after [timeoutMs].
-  func startScan(timeoutMs: Int64) throws
+  /// Scans for devices that advertise a sport service known to the core. With [allDevices] it scans EVERY BLE device (a device
+  /// may not advertise its services): what it can do is only known after connecting. Stops by itself after [timeoutMs]; never
+  /// scan for everything for long, and not in the background.
+  func startScan(timeoutMs: Int64, allDevices: Bool) throws
   func stopScan() throws
   /// Connects, discovers the services and subscribes to the measurements. Completes when the link is up and subscribed.
   func connect(deviceId: String, completion: @escaping (Result<Void, Error>) -> Void)
@@ -593,6 +652,9 @@ protocol SportBleHostApi {
   func forget(deviceId: String) throws
   /// The device the user prefers for [metric] (null clears it). Only used while that device has a healthy value.
   func setPreferredSource(metric: NativeMetric, deviceId: String?) throws
+  /// The wheel circumference in metres (0.5 to 3.0; null clears it) of a cycling wheel sensor: without it the wheel gives
+  /// revolutions but no speed. Applies from the next connection of the device too.
+  func setWheelCircumference(deviceId: String, metres: Double?) throws
   func snapshot() throws -> NativeSensorSnapshot
 }
 
@@ -615,15 +677,17 @@ class SportBleHostApiSetup {
     } else {
       adapterStateChannel.setMessageHandler(nil)
     }
-    /// Scans for devices that advertise a sport service (heart rate, running or cycling speed and cadence). Stops by itself
-    /// after [timeoutMs].
+    /// Scans for devices that advertise a sport service known to the core. With [allDevices] it scans EVERY BLE device (a device
+    /// may not advertise its services): what it can do is only known after connecting. Stops by itself after [timeoutMs]; never
+    /// scan for everything for long, and not in the background.
     let startScanChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.flutter_sport_ble.SportBleHostApi.startScan\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
     if let api = api {
       startScanChannel.setMessageHandler { message, reply in
         let args = message as! [Any?]
         let timeoutMsArg = args[0] as! Int64
+        let allDevicesArg = args[1] as! Bool
         do {
-          try api.startScan(timeoutMs: timeoutMsArg)
+          try api.startScan(timeoutMs: timeoutMsArg, allDevices: allDevicesArg)
           reply(wrapResult(nil))
         } catch {
           reply(wrapError(error))
@@ -710,6 +774,24 @@ class SportBleHostApiSetup {
       }
     } else {
       setPreferredSourceChannel.setMessageHandler(nil)
+    }
+    /// The wheel circumference in metres (0.5 to 3.0; null clears it) of a cycling wheel sensor: without it the wheel gives
+    /// revolutions but no speed. Applies from the next connection of the device too.
+    let setWheelCircumferenceChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.flutter_sport_ble.SportBleHostApi.setWheelCircumference\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      setWheelCircumferenceChannel.setMessageHandler { message, reply in
+        let args = message as! [Any?]
+        let deviceIdArg = args[0] as! String
+        let metresArg: Double? = nilOrValue(args[1])
+        do {
+          try api.setWheelCircumference(deviceId: deviceIdArg, metres: metresArg)
+          reply(wrapResult(nil))
+        } catch {
+          reply(wrapError(error))
+        }
+      }
+    } else {
+      setWheelCircumferenceChannel.setMessageHandler(nil)
     }
     let snapshotChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.flutter_sport_ble.SportBleHostApi.snapshot\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
     if let api = api {

@@ -7,6 +7,7 @@
     <!-- Android 11 and older. -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+    <!-- Android 11 and older also need a LOCATION permission to scan: this package does NOT declare it (a plugin that did, with
+         a maxSdkVersion, would cap the one of a GPS plugin in the merged manifest). The host app declares and requests it. -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 </manifest>

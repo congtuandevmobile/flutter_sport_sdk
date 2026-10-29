@@ -120,19 +120,37 @@ enum NativeAdapterState {
 
 enum NativeConnection {
   disconnected,
+  /// The link is being made.
   connecting,
-  connected,
+  /// The link is up and the services are being discovered.
+  discovering,
+  /// The services are known and the measurements are being subscribed.
+  subscribing,
+  /// Subscribed to at least one workout measurement: the sensor can give metrics.
+  ready,
+  /// The link works but the device has no workout measurement this package can use (or none could be subscribed).
+  notSupported,
   /// The last attempt failed or the link was lost with an error (see `NativeDeviceState.error`).
   failed,
 }
 
-/// Order matches `sensor.model.MetricType` of the shared core.
+/// Order matches `sensor.model.MetricType` of the shared core (a test of each native engine fails if it drifts).
 enum NativeMetric {
   heartRate,
   runningSpeed,
   runningCadence,
   runningStrideLength,
   totalDistance,
+  cyclingCadence,
+  powerWatts,
+  cyclingSpeed,
+  incline,
+  energyKcal,
+  strokeRate,
+  strokeCount,
+  wheelRevolutions,
+  stepRate,
+  floors,
 }
 
 enum NativeKind {
@@ -215,7 +233,14 @@ class NativeDeviceState {
     required this.connection,
     required this.epoch,
     required this.capabilities,
+    required this.discoveredServices,
+    required this.subscribedCharacteristics,
+    required this.recentRrMs,
     this.error,
+    this.manufacturer,
+    this.model,
+    this.firmware,
+    this.batteryPercent,
   });
 
   String id;
@@ -229,7 +254,26 @@ class NativeDeviceState {
 
   List<NativeCapability> capabilities;
 
+  /// 16-bit service numbers found on the device (4 lowercase hex digits), once discovered.
+  List<String> discoveredServices;
+
+  /// 16-bit characteristic numbers that are subscribed.
+  List<String> subscribedCharacteristics;
+
+  /// R-R intervals (ms) of the latest heart rate notification that had some; empty when none.
+  List<int> recentRrMs;
+
   String? error;
+
+  /// Read once from Device Information, when the device has it.
+  String? manufacturer;
+
+  String? model;
+
+  String? firmware;
+
+  /// The device's own battery level (0 to 100), when it has the Battery service. Per device: never resolved between devices.
+  int? batteryPercent;
 
   List<Object?> _toList() {
     return <Object?>[
@@ -238,7 +282,14 @@ class NativeDeviceState {
       connection,
       epoch,
       capabilities,
+      discoveredServices,
+      subscribedCharacteristics,
+      recentRrMs,
       error,
+      manufacturer,
+      model,
+      firmware,
+      batteryPercent,
     ];
   }
 
@@ -253,7 +304,14 @@ class NativeDeviceState {
       connection: result[2]! as NativeConnection,
       epoch: result[3]! as int,
       capabilities: (result[4]! as List<Object?>).cast<NativeCapability>(),
-      error: result[5] as String?,
+      discoveredServices: (result[5]! as List<Object?>).cast<String>(),
+      subscribedCharacteristics: (result[6]! as List<Object?>).cast<String>(),
+      recentRrMs: (result[7]! as List<Object?>).cast<int>(),
+      error: result[8] as String?,
+      manufacturer: result[9] as String?,
+      model: result[10] as String?,
+      firmware: result[11] as String?,
+      batteryPercent: result[12] as int?,
     );
   }
 
@@ -266,7 +324,7 @@ class NativeDeviceState {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(id, other.id) && _deepEquals(name, other.name) && _deepEquals(connection, other.connection) && _deepEquals(epoch, other.epoch) && _deepEquals(capabilities, other.capabilities) && _deepEquals(error, other.error);
+    return _deepEquals(id, other.id) && _deepEquals(name, other.name) && _deepEquals(connection, other.connection) && _deepEquals(epoch, other.epoch) && _deepEquals(capabilities, other.capabilities) && _deepEquals(discoveredServices, other.discoveredServices) && _deepEquals(subscribedCharacteristics, other.subscribedCharacteristics) && _deepEquals(recentRrMs, other.recentRrMs) && _deepEquals(error, other.error) && _deepEquals(manufacturer, other.manufacturer) && _deepEquals(model, other.model) && _deepEquals(firmware, other.firmware) && _deepEquals(batteryPercent, other.batteryPercent);
   }
 
   @override
@@ -387,8 +445,8 @@ class NativeSensorSnapshot {
   int get hashCode => _deepHash(<Object?>[runtimeType, ..._toList()]);
 }
 
-/// A notification of a characteristic the core does not decode (for instance the Cycling Speed and Cadence Measurement),
-/// handed over so that whoever decodes it can use it.
+/// A notification the host may want untouched (the Cycling Speed and Cadence Measurement, which `flutter_tracking_gps` can
+/// also decode), handed over besides being decoded here.
 class NativeRawPacket {
   NativeRawPacket({
     required this.deviceId,
@@ -559,16 +617,17 @@ class SportBleHostApi {
     return pigeonVar_replyValue! as NativeAdapterState;
   }
 
-  /// Scans for devices that advertise a sport service (heart rate, running or cycling speed and cadence). Stops by itself
-  /// after [timeoutMs].
-  Future<void> startScan(int timeoutMs) async {
+  /// Scans for devices that advertise a sport service known to the core. With [allDevices] it scans EVERY BLE device (a device
+  /// may not advertise its services): what it can do is only known after connecting. Stops by itself after [timeoutMs]; never
+  /// scan for everything for long, and not in the background.
+  Future<void> startScan(int timeoutMs, bool allDevices) async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.flutter_sport_ble.SportBleHostApi.startScan$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[timeoutMs]);
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[timeoutMs, allDevices]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     _extractReplyValueOrThrow(
@@ -662,6 +721,26 @@ class SportBleHostApi {
       binaryMessenger: pigeonVar_binaryMessenger,
     );
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[metric, deviceId]);
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
+  }
+
+  /// The wheel circumference in metres (0.5 to 3.0; null clears it) of a cycling wheel sensor: without it the wheel gives
+  /// revolutions but no speed. Applies from the next connection of the device too.
+  Future<void> setWheelCircumference(String deviceId, double? metres) async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.flutter_sport_ble.SportBleHostApi.setWheelCircumference$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[deviceId, metres]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     _extractReplyValueOrThrow(

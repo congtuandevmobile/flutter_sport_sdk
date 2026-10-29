@@ -38,10 +38,13 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
     private val links = HashMap<String, Link>()
     private var scanning = false
 
-    private class Link(val gatt: BluetoothGatt, val wanted: List<String>) {
+    private class Link(val gatt: BluetoothGatt, val notify: Set<String>, val read: Set<String>) {
         var pending: ArrayDeque<BluetoothGattCharacteristic> = ArrayDeque()
+        var toRead: ArrayDeque<BluetoothGattCharacteristic> = ArrayDeque()
         var announced = false
         var services: List<String> = emptyList()
+        val subscribed = ArrayList<String>()
+        val failed = ArrayList<String>()
     }
 
     override fun adapterState(): NativeAdapterState {
@@ -73,7 +76,7 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
         }
     }
 
-    override fun startScan(serviceShortIds: List<String>) {
+    override fun startScan(serviceShortIds: List<String>?) {
         main.post {
             if (scanning) return@post
             val scanner = adapter?.bluetoothLeScanner
@@ -81,7 +84,8 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
                 listener?.onScanFinished()
                 return@post
             }
-            val filters = serviceShortIds.map { ScanFilter.Builder().setServiceUuid(ParcelUuid(uuidOf(it))).build() }
+            // null: every BLE device (a device may not advertise its services)
+            val filters = serviceShortIds?.map { ScanFilter.Builder().setServiceUuid(ParcelUuid(uuidOf(it))).build() }
             try {
                 scanner.startScan(filters, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED).build(), scanCallback)
                 scanning = true
@@ -101,7 +105,7 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
 
     // ── connect ─────────────────────────────────────────────────────────────
 
-    override fun connect(deviceId: String, measurementShortIds: List<String>) {
+    override fun connect(deviceId: String, notify: List<String>, read: List<String>) {
         main.post {
             val a = adapter
             if (a == null || !hasConnectPermission()) {
@@ -113,7 +117,7 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
                 val device: BluetoothDevice = a.getRemoteDevice(deviceId)
                 val callback = GattCallback(deviceId)
                 val gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
-                links[deviceId] = Link(gatt, measurementShortIds)
+                links[deviceId] = Link(gatt, notify.toSet(), read.toSet())
             } catch (e: IllegalArgumentException) {
                 listener?.onDisconnected(deviceId, "BAD_DEVICE: ${e.message}")
             } catch (e: SecurityException) {
@@ -139,6 +143,7 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
                     return@post
                 }
                 if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
+                    listener?.onGattConnected(id)
                     try { gatt.discoverServices() } catch (e: SecurityException) { end(id, gatt, "PERMISSION: ${e.message}") }
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     end(id, gatt, if (status == BluetoothGatt.GATT_SUCCESS) null else "GATT_$status: the link ended")
@@ -155,9 +160,13 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
                     return@post
                 }
                 link.services = gatt.services.map { Gatt.short(it.uuid.toString()) }
+                val name = try { gatt.device.name } catch (_: SecurityException) { null }
+                listener?.onServicesDiscovered(id, name, link.services)
                 for (service in gatt.services) {
                     for (c in service.characteristics) {
-                        if (Gatt.short(c.uuid.toString()) in link.wanted) link.pending.addLast(c)
+                        val short = Gatt.short(c.uuid.toString())
+                        if (short in link.notify) link.pending.addLast(c)
+                        if (short in link.read) link.toRead.addLast(c)
                     }
                 }
                 enableNext(id, link)
@@ -168,12 +177,24 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
             main.post {
                 val link = links[id] ?: return@post
                 if (link.gatt !== gatt) return@post
-                if (status != BluetoothGatt.GATT_SUCCESS) {
-                    end(id, gatt, "GATT_$status: could not subscribe")
-                    return@post
-                }
+                // A refused descriptor is ONE characteristic that does not work, reported, not a dead link.
+                val short = Gatt.short(descriptor.characteristic.uuid.toString())
+                if (status == BluetoothGatt.GATT_SUCCESS) link.subscribed.add(short) else link.failed.add(short)
                 enableNext(id, link)
             }
+        }
+
+        override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray, status: Int) {
+            val copy = value.clone()
+            main.post { readDone(id, gatt, characteristic, copy, status) }
+        }
+
+        @Deprecated("Android 12 and older")
+        @Suppress("DEPRECATION")
+        override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+            if (Build.VERSION.SDK_INT >= 33) return // the four-argument callback delivers it
+            val copy = characteristic.value?.clone() ?: ByteArray(0)
+            main.post { readDone(id, gatt, characteristic, copy, status) }
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
@@ -190,24 +211,36 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
         }
     }
 
-    /** Subscribes to the next wanted characteristic, or announces the connection when none is left. */
+    private fun readDone(id: String, gatt: BluetoothGatt, c: BluetoothGattCharacteristic, bytes: ByteArray, status: Int) {
+        val link = links[id] ?: return
+        if (link.gatt !== gatt) return
+        if (status == BluetoothGatt.GATT_SUCCESS && bytes.isNotEmpty()) {
+            listener?.onNotification(id, Gatt.short(c.uuid.toString()), bytes)
+        }
+        readNext(id, link)
+    }
+
+    /** Subscribes to the next wanted characteristic, or announces the readiness when none is left. */
     private fun enableNext(id: String, link: Link) {
         val next = link.pending.removeFirstOrNull()
         if (next == null) {
             if (!link.announced) {
                 link.announced = true
-                val name = try { link.gatt.device.name } catch (_: SecurityException) { null }
-                listener?.onConnected(id, name, link.services)
+                listener?.onReady(id, link.subscribed.toList(), link.failed.toList())
+                readNext(id, link)
             }
             return
         }
+        val short = Gatt.short(next.uuid.toString())
         try {
             if (!link.gatt.setCharacteristicNotification(next, true)) {
+                link.failed.add(short)
                 enableNext(id, link)
                 return
             }
             val cccd = next.getDescriptor(CCCD)
-            if (cccd == null) {
+            if (cccd == null) { // the characteristic cannot notify: reported, never silently skipped
+                link.failed.add(short)
                 enableNext(id, link)
                 return
             }
@@ -215,7 +248,7 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
                 BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
             else
                 BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
-            val ok = if (Build.VERSION.SDK_INT >= 33) {
+            val started = if (Build.VERSION.SDK_INT >= 33) {
                 link.gatt.writeDescriptor(cccd, value) == android.bluetooth.BluetoothStatusCodes.SUCCESS
             } else {
                 @Suppress("DEPRECATION")
@@ -224,7 +257,20 @@ class AndroidBleTransport(private val context: Context) : BleTransport {
                     link.gatt.writeDescriptor(cccd)
                 }
             }
-            if (!ok) end(id, link.gatt, "GATT: could not start the subscription")
+            if (!started) {
+                link.failed.add(short)
+                enableNext(id, link)
+            }
+        } catch (e: SecurityException) {
+            end(id, link.gatt, "PERMISSION: ${e.message}")
+        }
+    }
+
+    /** Reads the next characteristic that is worth reading once (battery, device information). A refused read is skipped. */
+    private fun readNext(id: String, link: Link) {
+        val next = link.toRead.removeFirstOrNull() ?: return
+        try {
+            if (!link.gatt.readCharacteristic(next)) readNext(id, link)
         } catch (e: SecurityException) {
             end(id, link.gatt, "PERMISSION: ${e.message}")
         }

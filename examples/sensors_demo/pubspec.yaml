@@ -36,6 +36,8 @@ dependencies:
     path: ../../packages/flutter_sport_ble
   flutter_tracking_gps:
     path: ../../packages/flutter_tracking_gps
+  flutter_workout:
+    path: ../../packages/flutter_workout
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.

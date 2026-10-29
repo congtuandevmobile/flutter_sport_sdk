@@ -1,5 +1,6 @@
 package sensor.resolver
 
+import sensor.model.Capability
 import sensor.model.MeasurementKind
 import sensor.model.MetricType
 import sensor.model.SensorReading
@@ -38,15 +39,19 @@ class MetricResolverConfig(
  *
  *  - A source is a candidate for a metric while it is connected, its value is fresh ([MetricResolverConfig.staleAfterMs]) and
  *    it has recovered (see the config). A value of 0 is a measurement like any other.
- *  - Choice: the source the user prefers ([setPreferred]) when it is a candidate, else the one already chosen while it stays a
- *    candidate (so two healthy sources do not alternate), else the one that connected first.
+ *  - Choice: the source the user prefers ([setPreferred]) when it is a candidate, else the candidate of the best RANK for the
+ *    metric ([SourcePolicy]: a heart rate strap before a machine's heart rate, a power meter's cadence before a cadence sensor's),
+ *    else, among equals, the one already chosen (so two equally good sources do not alternate), else the one that connected first.
+ *    A better ranked source that becomes healthy takes over once; it never alternates, because a rank does not change.
  *  - A source is `(sourceId, epoch)`: the epoch grows with every new connection to the device. A reading or a connection event
  *    of an older epoch is dropped, and a newer epoch forgets everything the source had (counters of a reset sensor are never
  *    compared with the old ones).
  * All times come from one monotonic clock. Not thread-safe (the native engine calls it under its own lock/queue).
  */
 class MetricResolver(private val config: MetricResolverConfig = MetricResolverConfig()) {
-    private class Source(var epoch: Long, var connected: Boolean, val order: Long)
+    private class Source(var epoch: Long, var connected: Boolean, val order: Long) {
+        var capabilities: Set<Capability> = emptySet()
+    }
 
     private class Entry(var value: Double, var kind: MeasurementKind, var atMs: Long) {
         var samples = 1
@@ -70,9 +75,17 @@ class MetricResolver(private val config: MetricResolverConfig = MetricResolverCo
         if (epoch > source.epoch) {
             dropEntries(sourceId)
             source.epoch = epoch
+        } else if (connected && !source.connected) {
+            // The same epoch coming back is still a new link: it must earn its place again, never reuse what it had.
+            dropEntries(sourceId)
         }
         source.connected = connected
         return true
+    }
+
+    /** What the device can do (decided from the services it really exposes); it decides its rank for each metric. */
+    fun setCapabilities(sourceId: String, capabilities: Set<Capability>) {
+        sources[sourceId]?.capabilities = capabilities
     }
 
     /** Takes a reading of a connected source of the current epoch; false when it was dropped. */
@@ -138,12 +151,16 @@ class MetricResolver(private val config: MetricResolverConfig = MetricResolverCo
 
     private fun pick(metric: MetricType, candidates: List<String>): String {
         preferred[metric]?.let { if (it in candidates) { chosen[metric] = it; return it } }
-        chosen[metric]?.let { if (it in candidates) return it }
-        var best = candidates[0]
-        for (id in candidates) if (order(id) < order(best)) best = id
-        chosen[metric] = best
-        return best
+        val bestRank = candidates.minOf { rank(metric, it) }
+        val best = candidates.filter { rank(metric, it) == bestRank }
+        chosen[metric]?.let { if (it in best) return it }
+        var first = best[0]
+        for (id in best) if (order(id) < order(first)) first = id
+        chosen[metric] = first
+        return first
     }
+
+    private fun rank(metric: MetricType, id: String): Int = SourcePolicy.rank(metric, sources[id]?.capabilities ?: emptySet())
 
     private fun order(id: String): Long = sources[id]?.order ?: Long.MAX_VALUE
 

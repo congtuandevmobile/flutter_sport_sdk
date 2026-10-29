@@ -50,7 +50,7 @@ class FlutterSportBlePlugin : FlutterPlugin, SportBleHostApi, SportBleSink {
     // ── SportBleHostApi ─────────────────────────────────────────────────────
 
     override fun adapterState(): NativeAdapterState = engine?.adapterState() ?: NativeAdapterState.UNKNOWN
-    override fun startScan(timeoutMs: Long) { engine?.startScan(timeoutMs) }
+    override fun startScan(timeoutMs: Long, allDevices: Boolean) { engine?.startScan(timeoutMs, allDevices) }
     override fun stopScan() { engine?.stopScan() }
 
     override fun connect(deviceId: String, callback: (Result<Unit>) -> Unit) {
@@ -72,6 +72,7 @@ class FlutterSportBlePlugin : FlutterPlugin, SportBleHostApi, SportBleSink {
     override fun disconnect(deviceId: String) { engine?.disconnect(deviceId) }
     override fun forget(deviceId: String) { engine?.forget(deviceId) }
     override fun setPreferredSource(metric: NativeMetric, deviceId: String?) { engine?.setPreferred(metric, deviceId) }
+    override fun setWheelCircumference(deviceId: String, metres: Double?) { engine?.setWheelCircumference(deviceId, metres) }
     override fun snapshot(): NativeSensorSnapshot = engine?.snapshot()
         ?: NativeSensorSnapshot(metrics = emptyList(), devices = emptyList(), updatedAtMs = 0)
 

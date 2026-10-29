@@ -1,0 +1,67 @@
+# Device compatibility matrix. `verified` stays false until it was tried on the real hardware, on both platforms.
+# This file lists CANDIDATES to test, not devices known to work.
+devices:
+  - manufacturer: Polar
+    model: H10
+    firmware: "measured-on-test-device"
+    transport: bluetooth_le
+    services: ["180d"]
+    metrics:
+      heartRate: { verified: false }
+      rrIntervals: { verified: false }
+    battery: { verified: false }
+    background: { android: untested, ios: untested }
+    reconnect: { verified: false }
+    testedOn: { android: [], ios: [] }
+  - manufacturer: Zwift
+    model: RunPod
+    firmware: "measured-on-test-device"
+    transport: bluetooth_le
+    services: ["1814"]
+    metrics:
+      runningSpeed: { verified: false }
+      runningCadence: { verified: false, note: "steps or strides? check" }
+      totalDistance: { verified: false }
+    background: { android: untested, ios: untested }
+    reconnect: { verified: false }
+    testedOn: { android: [], ios: [] }
+  - manufacturer: Wahoo
+    model: RPM Cadence
+    firmware: "measured-on-test-device"
+    transport: bluetooth_le
+    services: ["1816"]
+    metrics:
+      cyclingCadence: { verified: false, note: "zero rpm, disconnect" }
+    testedOn: { android: [], ios: [] }
+  - manufacturer: Favero
+    model: Assioma
+    firmware: "measured-on-test-device"
+    transport: bluetooth_le
+    services: ["1818"]
+    metrics:
+      powerWatts: { verified: false }
+      cyclingCadence: { verified: false }
+    testedOn: { android: [], ios: [] }
+  - manufacturer: Wahoo
+    model: KICKR
+    firmware: "measured-on-test-device"
+    transport: bluetooth_le
+    services: ["1826"]
+    metrics:
+      cyclingPower: { verified: false }
+      cyclingCadence: { verified: false }
+      resistanceLevelFieldSize: { verified: false, note: "taken as 2 bytes" }
+    testedOn: { android: [], ios: [] }
+  - manufacturer: Concept2
+    model: PM5
+    firmware: "measured-on-test-device"
+    transport: bluetooth_le
+    services: ["1826"]
+    metrics:
+      strokeRate: { verified: false }
+      note: "also has a vendor protocol; the standard rower data may be partial"
+    testedOn: { android: [], ios: [] }
+not_standard_candidates:
+  - manufacturer: COROS
+    model: POD 2
+    note: "Bluetooth, but made for COROS watches: do not assume a third-party app can read standard RSC from it"

@@ -17,8 +17,21 @@ enum BleAdapterState {
 
 enum BleConnectionState {
   disconnected,
+
+  /// The link is being made.
   connecting,
-  connected,
+
+  /// The link is up and the services are being discovered.
+  discovering,
+
+  /// The services are known and the measurements are being subscribed.
+  subscribing,
+
+  /// Subscribed to at least one workout measurement: the device can give metrics. The ONLY state that means so.
+  ready,
+
+  /// The link works but the device has no workout measurement this package can use, or none could be subscribed.
+  notSupported,
 
   /// The attempt failed or the link was lost with an error (see [DeviceState.error]).
   failed,
@@ -40,6 +53,36 @@ enum SportMetric {
 
   /// Metres since the DEVICE's own start: a counter, never a workout distance by itself.
   totalDistance,
+
+  /// Pedal revolutions per minute (0 = the cranks are verified still).
+  cyclingCadence,
+
+  /// Watts (a power meter, a trainer, a rower). Never negative.
+  powerWatts,
+
+  /// Metres per second of a bike (a wheel sensor with a known circumference, or a trainer).
+  cyclingSpeed,
+
+  /// Percent, as the machine reports it.
+  incline,
+
+  /// Kilocalories since the MACHINE's own start (a counter).
+  energyKcal,
+
+  /// Strokes per minute (a rower).
+  strokeRate,
+
+  /// Strokes since the MACHINE's own start (a counter).
+  strokeCount,
+
+  /// Wheel revolutions of a cycling sensor (a counter).
+  wheelRevolutions,
+
+  /// Steps per minute of a machine (cross trainer, stair or step climber).
+  stepRate,
+
+  /// Floors since the MACHINE's own start (a counter).
+  floors,
 }
 
 enum MetricKind {
@@ -83,8 +126,15 @@ class DeviceState {
     required this.connection,
     required this.epoch,
     required this.capabilities,
+    this.discoveredServices = const [],
+    this.subscribedCharacteristics = const [],
+    this.recentRrMs = const [],
     this.name,
     this.error,
+    this.manufacturer,
+    this.model,
+    this.firmware,
+    this.batteryPercent,
   });
 
   final String id;
@@ -95,8 +145,25 @@ class DeviceState {
   final int epoch;
   final List<SensorCapability> capabilities;
 
-  /// A stable code and a message ("TIMEOUT: ...", "PERMISSION: ...", "GATT_8: ...").
+  /// 16-bit service numbers found on the device (4 lowercase hex digits), once discovered.
+  final List<String> discoveredServices;
+
+  /// 16-bit characteristic numbers that are subscribed.
+  final List<String> subscribedCharacteristics;
+
+  /// R-R intervals (ms) of the latest heart rate notification that had some; empty when none.
+  final List<int> recentRrMs;
+
+  /// A stable code and a message ("TIMEOUT: ...", "PERMISSION: ...", "NOT_SUPPORTED: ...", "PARTIAL: ...", "GATT_8: ...").
   final String? error;
+
+  /// Read once from Device Information, when the device has it.
+  final String? manufacturer;
+  final String? model;
+  final String? firmware;
+
+  /// The device's own battery level (0 to 100), when it has the Battery service. Per device: never resolved between devices.
+  final int? batteryPercent;
 }
 
 /// The chosen value of one metric and where it came from.
@@ -142,8 +209,13 @@ class SensorSnapshot {
   double? get runningCadencePerMin => values[SportMetric.runningCadence]?.value;
   double? get runningStrideLengthM => values[SportMetric.runningStrideLength]?.value;
   double? get deviceTotalDistanceM => values[SportMetric.totalDistance]?.value;
+  double? get cyclingCadenceRpm => values[SportMetric.cyclingCadence]?.value;
+  double? get powerWatts => values[SportMetric.powerWatts]?.value;
+  double? get cyclingSpeedMps => values[SportMetric.cyclingSpeed]?.value;
+  double? get inclinePercent => values[SportMetric.incline]?.value;
 
-  Iterable<DeviceState> get connectedDevices => devices.where((d) => d.connection == BleConnectionState.connected);
+  /// The devices that can give metrics now ([BleConnectionState.ready]).
+  Iterable<DeviceState> get readyDevices => devices.where((d) => d.connection == BleConnectionState.ready);
 }
 
 /// A notification of a characteristic the core does not decode (for instance the Cycling Speed and Cadence Measurement,
@@ -167,7 +239,8 @@ class RawPacket {
   final int receivedAtMs;
 }
 
-/// Thrown when connecting fails. [code] is stable: TIMEOUT, PERMISSION, BAD_DEVICE, GATT_status, CONNECT_FAILED, DETACHED.
+/// Thrown when connecting fails. [code] is stable: TIMEOUT, PERMISSION, BAD_DEVICE, NOT_SUPPORTED, GATT_status, CONNECT_FAILED,
+/// DETACHED.
 class SportBleException implements Exception {
   const SportBleException(this.code, this.message);
 

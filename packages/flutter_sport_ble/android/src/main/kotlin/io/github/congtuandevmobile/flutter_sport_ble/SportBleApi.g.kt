@@ -214,10 +214,18 @@ enum class NativeAdapterState(val raw: Int) {
 
 enum class NativeConnection(val raw: Int) {
   DISCONNECTED(0),
+  /** The link is being made. */
   CONNECTING(1),
-  CONNECTED(2),
+  /** The link is up and the services are being discovered. */
+  DISCOVERING(2),
+  /** The services are known and the measurements are being subscribed. */
+  SUBSCRIBING(3),
+  /** Subscribed to at least one workout measurement: the sensor can give metrics. */
+  READY(4),
+  /** The link works but the device has no workout measurement this package can use (or none could be subscribed). */
+  NOT_SUPPORTED(5),
   /** The last attempt failed or the link was lost with an error (see `NativeDeviceState.error`). */
-  FAILED(3);
+  FAILED(6);
 
   companion object {
     fun ofRaw(raw: Int): NativeConnection? {
@@ -226,13 +234,23 @@ enum class NativeConnection(val raw: Int) {
   }
 }
 
-/** Order matches `sensor.model.MetricType` of the shared core. */
+/** Order matches `sensor.model.MetricType` of the shared core (a test of each native engine fails if it drifts). */
 enum class NativeMetric(val raw: Int) {
   HEART_RATE(0),
   RUNNING_SPEED(1),
   RUNNING_CADENCE(2),
   RUNNING_STRIDE_LENGTH(3),
-  TOTAL_DISTANCE(4);
+  TOTAL_DISTANCE(4),
+  CYCLING_CADENCE(5),
+  POWER_WATTS(6),
+  CYCLING_SPEED(7),
+  INCLINE(8),
+  ENERGY_KCAL(9),
+  STROKE_RATE(10),
+  STROKE_COUNT(11),
+  WHEEL_REVOLUTIONS(12),
+  STEP_RATE(13),
+  FLOORS(14);
 
   companion object {
     fun ofRaw(raw: Int): NativeMetric? {
@@ -325,7 +343,19 @@ data class NativeDeviceState (
   /** Grows with every new connection to the device: data of an older one is never mixed with a newer one. */
   val epoch: Long,
   val capabilities: List<NativeCapability>,
-  val error: String? = null
+  /** 16-bit service numbers found on the device (4 lowercase hex digits), once discovered. */
+  val discoveredServices: List<String>,
+  /** 16-bit characteristic numbers that are subscribed. */
+  val subscribedCharacteristics: List<String>,
+  /** R-R intervals (ms) of the latest heart rate notification that had some; empty when none. */
+  val recentRrMs: List<Long>,
+  val error: String? = null,
+  /** Read once from Device Information, when the device has it. */
+  val manufacturer: String? = null,
+  val model: String? = null,
+  val firmware: String? = null,
+  /** The device's own battery level (0 to 100), when it has the Battery service. Per device: never resolved between devices. */
+  val batteryPercent: Long? = null
 )
  {
   companion object {
@@ -335,8 +365,15 @@ data class NativeDeviceState (
       val connection = pigeonVar_list[2] as NativeConnection
       val epoch = pigeonVar_list[3] as Long
       val capabilities = pigeonVar_list[4] as List<NativeCapability>
-      val error = pigeonVar_list[5] as String?
-      return NativeDeviceState(id, name, connection, epoch, capabilities, error)
+      val discoveredServices = pigeonVar_list[5] as List<String>
+      val subscribedCharacteristics = pigeonVar_list[6] as List<String>
+      val recentRrMs = pigeonVar_list[7] as List<Long>
+      val error = pigeonVar_list[8] as String?
+      val manufacturer = pigeonVar_list[9] as String?
+      val model = pigeonVar_list[10] as String?
+      val firmware = pigeonVar_list[11] as String?
+      val batteryPercent = pigeonVar_list[12] as Long?
+      return NativeDeviceState(id, name, connection, epoch, capabilities, discoveredServices, subscribedCharacteristics, recentRrMs, error, manufacturer, model, firmware, batteryPercent)
     }
   }
   fun toList(): List<Any?> {
@@ -346,7 +383,14 @@ data class NativeDeviceState (
       connection,
       epoch,
       capabilities,
+      discoveredServices,
+      subscribedCharacteristics,
+      recentRrMs,
       error,
+      manufacturer,
+      model,
+      firmware,
+      batteryPercent,
     )
   }
   override fun equals(other: Any?): Boolean {
@@ -357,7 +401,7 @@ data class NativeDeviceState (
       return true
     }
     val other = other as NativeDeviceState
-    return SportBleApiPigeonUtils.deepEquals(this.id, other.id) && SportBleApiPigeonUtils.deepEquals(this.name, other.name) && SportBleApiPigeonUtils.deepEquals(this.connection, other.connection) && SportBleApiPigeonUtils.deepEquals(this.epoch, other.epoch) && SportBleApiPigeonUtils.deepEquals(this.capabilities, other.capabilities) && SportBleApiPigeonUtils.deepEquals(this.error, other.error)
+    return SportBleApiPigeonUtils.deepEquals(this.id, other.id) && SportBleApiPigeonUtils.deepEquals(this.name, other.name) && SportBleApiPigeonUtils.deepEquals(this.connection, other.connection) && SportBleApiPigeonUtils.deepEquals(this.epoch, other.epoch) && SportBleApiPigeonUtils.deepEquals(this.capabilities, other.capabilities) && SportBleApiPigeonUtils.deepEquals(this.discoveredServices, other.discoveredServices) && SportBleApiPigeonUtils.deepEquals(this.subscribedCharacteristics, other.subscribedCharacteristics) && SportBleApiPigeonUtils.deepEquals(this.recentRrMs, other.recentRrMs) && SportBleApiPigeonUtils.deepEquals(this.error, other.error) && SportBleApiPigeonUtils.deepEquals(this.manufacturer, other.manufacturer) && SportBleApiPigeonUtils.deepEquals(this.model, other.model) && SportBleApiPigeonUtils.deepEquals(this.firmware, other.firmware) && SportBleApiPigeonUtils.deepEquals(this.batteryPercent, other.batteryPercent)
   }
 
   override fun hashCode(): Int {
@@ -367,7 +411,14 @@ data class NativeDeviceState (
     result = 31 * result + SportBleApiPigeonUtils.deepHash(this.connection)
     result = 31 * result + SportBleApiPigeonUtils.deepHash(this.epoch)
     result = 31 * result + SportBleApiPigeonUtils.deepHash(this.capabilities)
+    result = 31 * result + SportBleApiPigeonUtils.deepHash(this.discoveredServices)
+    result = 31 * result + SportBleApiPigeonUtils.deepHash(this.subscribedCharacteristics)
+    result = 31 * result + SportBleApiPigeonUtils.deepHash(this.recentRrMs)
     result = 31 * result + SportBleApiPigeonUtils.deepHash(this.error)
+    result = 31 * result + SportBleApiPigeonUtils.deepHash(this.manufacturer)
+    result = 31 * result + SportBleApiPigeonUtils.deepHash(this.model)
+    result = 31 * result + SportBleApiPigeonUtils.deepHash(this.firmware)
+    result = 31 * result + SportBleApiPigeonUtils.deepHash(this.batteryPercent)
     return result
   }
 }
@@ -468,8 +519,8 @@ data class NativeSensorSnapshot (
 }
 
 /**
- * A notification of a characteristic the core does not decode (for instance the Cycling Speed and Cadence Measurement),
- * handed over so that whoever decodes it can use it.
+ * A notification the host may want untouched (the Cycling Speed and Cadence Measurement, which `flutter_tracking_gps` can
+ * also decode), handed over besides being decoded here.
  *
  * Generated class from Pigeon that represents data sent in messages.
  */
@@ -630,10 +681,11 @@ private open class SportBleApiPigeonCodec : StandardMessageCodec() {
 interface SportBleHostApi {
   fun adapterState(): NativeAdapterState
   /**
-   * Scans for devices that advertise a sport service (heart rate, running or cycling speed and cadence). Stops by itself
-   * after [timeoutMs].
+   * Scans for devices that advertise a sport service known to the core. With [allDevices] it scans EVERY BLE device (a device
+   * may not advertise its services): what it can do is only known after connecting. Stops by itself after [timeoutMs]; never
+   * scan for everything for long, and not in the background.
    */
-  fun startScan(timeoutMs: Long)
+  fun startScan(timeoutMs: Long, allDevices: Boolean)
   fun stopScan()
   /** Connects, discovers the services and subscribes to the measurements. Completes when the link is up and subscribed. */
   fun connect(deviceId: String, callback: (Result<Unit>) -> Unit)
@@ -642,6 +694,11 @@ interface SportBleHostApi {
   fun forget(deviceId: String)
   /** The device the user prefers for [metric] (null clears it). Only used while that device has a healthy value. */
   fun setPreferredSource(metric: NativeMetric, deviceId: String?)
+  /**
+   * The wheel circumference in metres (0.5 to 3.0; null clears it) of a cycling wheel sensor: without it the wheel gives
+   * revolutions but no speed. Applies from the next connection of the device too.
+   */
+  fun setWheelCircumference(deviceId: String, metres: Double?)
   fun snapshot(): NativeSensorSnapshot
 
   companion object {
@@ -674,8 +731,9 @@ interface SportBleHostApi {
           channel.setMessageHandler { message, reply ->
             val args = message as List<Any?>
             val timeoutMsArg = args[0] as Long
+            val allDevicesArg = args[1] as Boolean
             val wrapped: List<Any?> = try {
-              api.startScan(timeoutMsArg)
+              api.startScan(timeoutMsArg, allDevicesArg)
               listOf(null)
             } catch (exception: Throwable) {
               SportBleApiPigeonUtils.wrapError(exception)
@@ -766,6 +824,25 @@ interface SportBleHostApi {
             val deviceIdArg = args[1] as String?
             val wrapped: List<Any?> = try {
               api.setPreferredSource(metricArg, deviceIdArg)
+              listOf(null)
+            } catch (exception: Throwable) {
+              SportBleApiPigeonUtils.wrapError(exception)
+            }
+            reply.reply(wrapped)
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.flutter_sport_ble.SportBleHostApi.setWheelCircumference$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val deviceIdArg = args[0] as String
+            val metresArg = args[1] as Double?
+            val wrapped: List<Any?> = try {
+              api.setWheelCircumference(deviceIdArg, metresArg)
               listOf(null)
             } catch (exception: Throwable) {
               SportBleApiPigeonUtils.wrapError(exception)

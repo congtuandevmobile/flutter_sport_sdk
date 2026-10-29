@@ -8,4 +8,5 @@ environment:
 workspace:
   - packages/flutter_tracking_gps
   - packages/flutter_sport_ble
+  - packages/flutter_workout
   - examples/sensors_demo

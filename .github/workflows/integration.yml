@@ -1,0 +1,35 @@
+name: integration
+on:
+  push:
+    paths: ['packages/**', 'shared/**', 'examples/**', 'tool/**', '.github/workflows/integration.yml']
+  pull_request:
+    paths: ['packages/**', 'shared/**', 'examples/**', 'tool/**', '.github/workflows/integration.yml']
+jobs:
+  android-both-plugins:
+    # One app with both plugins: builds, and the merged manifest keeps the GPS permission (see tool/check_merged_manifest.sh).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable }
+      - run: flutter pub get
+      - run: tool/check_merged_manifest.sh
+      - working-directory: examples/sensors_demo
+        run: flutter build apk --debug
+  ios-both-plugins:
+    # Two static Kotlin/Native frameworks in one app: link check.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable }
+      - run: flutter pub get
+      - run: packages/flutter_sport_ble/tool/build_core.sh debug
+      - run: packages/flutter_workout/tool/build_core.sh debug
+      - run: packages/flutter_tracking_gps/tool/build_core.sh debug
+      - working-directory: examples/sensors_demo
+        run: flutter build ios --simulator --no-codesign --debug

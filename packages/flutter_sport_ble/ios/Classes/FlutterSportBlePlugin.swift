@@ -29,7 +29,7 @@ public final class FlutterSportBlePlugin: NSObject, FlutterPlugin, SportBleHostA
     // MARK: - SportBleHostApi
 
     func adapterState() throws -> NativeAdapterState { engine?.adapterState() ?? .unknown }
-    func startScan(timeoutMs: Int64) throws { engine?.startScan(timeoutMs: timeoutMs) }
+    func startScan(timeoutMs: Int64, allDevices: Bool) throws { engine?.startScan(timeoutMs: timeoutMs, allDevices: allDevices) }
     func stopScan() throws { engine?.stopScan() }
 
     func connect(deviceId: String, completion: @escaping (Result<Void, Error>) -> Void) {
@@ -54,6 +54,9 @@ public final class FlutterSportBlePlugin: NSObject, FlutterPlugin, SportBleHostA
     func forget(deviceId: String) throws { engine?.forget(deviceId: deviceId) }
     func setPreferredSource(metric: NativeMetric, deviceId: String?) throws {
         engine?.setPreferred(metric: metric, deviceId: deviceId)
+    }
+    func setWheelCircumference(deviceId: String, metres: Double?) throws {
+        engine?.setWheelCircumference(deviceId: deviceId, metres: metres)
     }
     func snapshot() throws -> NativeSensorSnapshot {
         engine?.snapshot() ?? NativeSensorSnapshot(metrics: [], devices: [], updatedAtMs: 0)
