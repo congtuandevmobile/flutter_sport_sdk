@@ -1,0 +1,29 @@
+name: flutter_sport_ble
+description: "Bluetooth LE sport sensors for Flutter: connects several devices at once (heart rate straps, running footpods, cycling sensors), decodes them in a shared Kotlin core and publishes one resolved value per metric."
+version: 0.0.1-beta
+repository: https://github.com/congtuandevmobile/flutter_sport_sdk
+resolution: workspace
+
+environment:
+  sdk: ^3.10.7
+  flutter: '>=3.3.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  meta: ^1.17.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  pigeon: ^26.1.7
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: io.github.congtuandevmobile.flutter_sport_ble
+        pluginClass: FlutterSportBlePlugin
+      ios:
+        pluginClass: FlutterSportBlePlugin

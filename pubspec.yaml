@@ -1,0 +1,11 @@
+name: flutter_sport_sdk_workspace
+description: Workspace of the sport SDK packages (not published).
+publish_to: none
+
+environment:
+  sdk: ^3.10.7
+
+workspace:
+  - packages/flutter_tracking_gps
+  - packages/flutter_sport_ble
+  - examples/sensors_demo

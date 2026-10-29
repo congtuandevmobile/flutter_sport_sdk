@@ -1,0 +1,142 @@
+
+import 'package:flutter_sport_ble/flutter_sport_ble.dart';
+import 'package:flutter_sport_ble/src/sport_ble_api.g.dart';
+import 'package:flutter_sport_ble/src/sport_ble_platform.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+class FakeHost extends SportBleHostApi {
+  final calls = <String>[];
+  Object? connectError;
+
+  @override
+  Future<NativeAdapterState> adapterState() async => NativeAdapterState.poweredOff;
+  @override
+  Future<void> startScan(int timeoutMs) async => calls.add('scan:$timeoutMs');
+  @override
+  Future<void> stopScan() async => calls.add('stopScan');
+  @override
+  Future<void> connect(String deviceId) async {
+    calls.add('connect:$deviceId');
+    if (connectError != null) throw connectError!;
+  }
+
+  @override
+  Future<void> disconnect(String deviceId) async => calls.add('disconnect:$deviceId');
+  @override
+  Future<void> forget(String deviceId) async => calls.add('forget:$deviceId');
+  @override
+  Future<void> setPreferredSource(NativeMetric metric, String? deviceId) async =>
+      calls.add('prefer:${metric.name}:$deviceId');
+  @override
+  Future<NativeSensorSnapshot> snapshot() async => _native();
+}
+
+NativeSensorSnapshot _native() => NativeSensorSnapshot(
+  updatedAtMs: 1234,
+  metrics: [
+    NativeResolvedMetric(metric: NativeMetric.heartRate, value: 145, sourceId: 'strap', kind: NativeKind.instantaneous, ageMs: 200),
+    NativeResolvedMetric(metric: NativeMetric.runningCadence, value: 0, sourceId: 'foot', kind: NativeKind.instantaneous, ageMs: 900),
+    NativeResolvedMetric(metric: NativeMetric.totalDistance, value: 4000.5, sourceId: 'foot', kind: NativeKind.cumulative, ageMs: 900),
+  ],
+  devices: [
+    NativeDeviceState(id: 'strap', connection: NativeConnection.connected, epoch: 2, capabilities: [NativeCapability.heartRate]),
+    NativeDeviceState(
+      id: 'foot',
+      connection: NativeConnection.failed,
+      epoch: 1,
+      capabilities: [NativeCapability.runningSpeedCadence, NativeCapability.battery],
+      error: 'GATT_8: lost',
+      name: 'Footpod',
+    ),
+  ],
+);
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  late FakeHost host;
+  late PigeonSportBlePlatform platform;
+  late SportBle ble;
+
+  setUp(() {
+    host = FakeHost();
+    platform = PigeonSportBlePlatform(api: host);
+    ble = SportBle(platform: platform);
+  });
+
+  test('calls reach native with their arguments', () async {
+    await ble.startScan(timeout: const Duration(seconds: 5));
+    await ble.stopScan();
+    await ble.connect('A');
+    await ble.disconnect('A');
+    await ble.forget('A');
+    await ble.setPreferredSource(SportMetric.runningCadence, 'foot');
+    await ble.setPreferredSource(SportMetric.heartRate, null);
+    expect(host.calls, [
+      'scan:5000', 'stopScan', 'connect:A', 'disconnect:A', 'forget:A', 'prefer:runningCadence:foot', 'prefer:heartRate:null',
+    ]);
+    expect(await ble.adapterState(), BleAdapterState.poweredOff);
+  });
+
+  test('a snapshot keeps one value per metric, 0 is a value and a missing metric is null', () async {
+    final s = await ble.snapshot();
+    expect(s.heartRateBpm, 145);
+    expect(s.runningCadencePerMin, 0);
+    expect(s.runningSpeedMps, isNull);
+    expect(s.deviceTotalDistanceM, 4000.5);
+    expect(s[SportMetric.totalDistance]!.kind, MetricKind.cumulative);
+    expect(s[SportMetric.heartRate]!.sourceId, 'strap');
+    expect(s[SportMetric.heartRate]!.age, const Duration(milliseconds: 200));
+    expect(s.updatedAtMs, 1234);
+    expect(s.connectedDevices.map((d) => d.id), ['strap']);
+    final foot = s.devices.firstWhere((d) => d.id == 'foot');
+    expect(foot.connection, BleConnectionState.failed);
+    expect(foot.error, 'GATT_8: lost');
+    expect(foot.name, 'Footpod');
+    expect(foot.capabilities, [SensorCapability.runningSpeedCadence, SensorCapability.battery]);
+  });
+
+  test('events from native become streams', () async {
+    final devices = <SportDevice>[];
+    final snaps = <SensorSnapshot>[];
+    final raws = <RawPacket>[];
+    var stops = 0;
+    ble.devices.listen(devices.add);
+    ble.snapshots.listen(snaps.add);
+    ble.rawPackets.listen(raws.add);
+    ble.scanStopped.listen((_) => stops++);
+
+    platform.onDeviceFound(NativeBleDevice(id: 'A', name: 'Strap', rssi: -60, capabilities: [NativeCapability.heartRate]));
+    platform.onSnapshot(_native());
+    platform.onRawPacket(NativeRawPacket(deviceId: 'bike', epoch: 3, characteristic: '2a5b', data: Uint8List.fromList([2, 1, 0, 1, 0]), receivedAtMs: 77));
+    platform.onScanStopped();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(devices.single.name, 'Strap');
+    expect(devices.single.capabilities, [SensorCapability.heartRate]);
+    expect(snaps.single.heartRateBpm, 145);
+    expect(raws.single.epoch, 3);
+    expect(raws.single.data, [2, 1, 0, 1, 0]);
+    expect(stops, 1);
+  });
+
+  test('a failed connect throws a SportBleException with the native code', () async {
+    host.connectError = PlatformExceptionLike('TIMEOUT', 'the device did not answer in time');
+    await expectLater(
+      ble.connect('A'),
+      throwsA(isA<SportBleException>().having((e) => e.code, 'code', 'TIMEOUT')),
+    );
+  });
+
+  test('the empty snapshot has nothing', () {
+    const s = SensorSnapshot.empty();
+    expect(s.heartRateBpm, isNull);
+    expect(s.devices, isEmpty);
+  });
+}
+
+/// A `PlatformException` (what Pigeon throws for a native FlutterError).
+class PlatformExceptionLike extends PlatformException {
+  PlatformExceptionLike(String code, String message) : super(code: code, message: message);
+}

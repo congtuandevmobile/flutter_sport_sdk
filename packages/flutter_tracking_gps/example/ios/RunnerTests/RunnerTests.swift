@@ -1,0 +1,1223 @@
+import CoreLocation
+import XCTest
+
+@testable import flutter_tracking_gps
+@testable import TrackingCore
+
+/// One controllable time for the engine: `mono` is its monotonic clock and `wall`
+/// the wall clock the fix ages are measured against.
+private final class TestClock {
+    var seconds: Double = 0
+    let base = Date()
+    var mono: Int64 { 5_000_000 + Int64(seconds * 1000) }
+    var wall: Date { base.addingTimeInterval(seconds) }
+}
+
+/// A fake location provider: tests push locations by hand.
+private final class FakeProvider: LocationProviding {
+    weak var delegate: LocationProviderDelegate?
+    let clock: TestClock
+    init(clock: TestClock) { self.clock = clock }
+    var permission: NativePermission = .granted
+    var startError: Error?
+    private(set) var starts = 0
+    private(set) var stops = 0
+
+    func requestWhenInUseAuthorization() {}
+
+    func startUpdates(minDistanceMeters: Double) throws {
+        if let startError = startError { throw startError }
+        starts += 1
+    }
+
+    func stopUpdates() { stops += 1 }
+
+    private(set) var requestedMinDistances: [Double] = []
+    func updateRequest(minDistanceMeters: Double) { requestedMinDistances.append(minDistanceMeters) }
+
+    /// A location [north] metres north of the origin, [seconds] into the test. The
+    /// test clock moves to that moment first: the fix is measured and arrives then.
+    func push(north: Double, seconds: Double = 0, accuracy: Double = 5, speed: Double = 3) {
+        clock.seconds = seconds
+        let location = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 10 + north / 111_195, longitude: 106),
+            altitude: 0, horizontalAccuracy: accuracy, verticalAccuracy: 5, course: -1, speed: speed,
+            timestamp: clock.wall)
+        delegate?.locationProvider(self, didUpdate: [location])
+    }
+}
+
+/// A fake step provider: tests push the segment's step count and decide how the exact query answers.
+private final class FakeSteps: StepProviding {
+    let clock: TestClock
+    init(clock: TestClock) { self.clock = clock }
+    var available: Result<Void, StepError> = .success(())
+    var permission: NativePermission = .granted
+    func availability() -> Result<Void, StepError> { available }
+    func requestPermission(completion: @escaping (NativePermission) -> Void) { completion(permission) }
+
+    private var handler: ((Result<StepReading, StepError>) -> Void)?
+    private(set) var starts = 0
+    private(set) var stops = 0
+    /// How the exact query answers. `.some` answers at once; nil HOLDS the answer until `release`.
+    var autoAnswer: Result<Int64, StepError>? = .success(0)
+    private var held: [(Result<Int64, StepError>) -> Void] = []
+    var heldCount: Int { held.count }
+
+    func startUpdates(from start: Date, handler: @escaping (Result<StepReading, StepError>) -> Void) {
+        starts += 1
+        self.handler = handler
+    }
+
+    func stopUpdates() {
+        stops += 1
+        handler = nil
+    }
+
+    func query(from: Date, to: Date, timeout: TimeInterval, completion: @escaping (Result<Int64, StepError>) -> Void) {
+        if let answer = autoAnswer { completion(answer) } else { held.append(completion) }
+    }
+
+    /// Answers the `index`-th held query (oldest first).
+    func release(_ result: Result<Int64, StepError>, at index: Int = 0) {
+        guard index < held.count else { return }
+        held[index](result)
+    }
+
+    /// The segment's count so far, measured now.
+    func push(_ steps: Int64) { handler?(.success(StepReading(count: steps, endDate: clock.wall))) }
+    func fail(_ error: StepError) { handler?(.failure(error)) }
+}
+
+/// A fake accelerometer: tests push readings by hand, in seconds since the sensor was started.
+private final class FakeMotion: MotionProviding {
+    var available = true
+    var isAvailable: Bool { available }
+    private var handler: ((Result<AccelReading, MotionError>) -> Void)?
+    private var base: TimeInterval = 0
+    private(set) var starts = 0
+    private(set) var stops = 0
+
+    func startUpdates(handler: @escaping (Result<AccelReading, MotionError>) -> Void) {
+        starts += 1
+        base = ProcessInfo.processInfo.systemUptime
+        self.handler = handler
+    }
+
+    func stopUpdates() {
+        stops += 1
+        handler = nil
+    }
+
+    func push(at seconds: Double, _ x: Double, _ y: Double, _ z: Double) {
+        handler?(.success(AccelReading(timestamp: base + seconds, x: x, y: y, z: z)))
+    }
+
+    func fail(_ error: MotionError) { handler?(.failure(error)) }
+
+    /// A leg-mounted phone at 50 Hz: gravity plus a periodic motion at `rpm` on a tilted axis.
+    func pedal(from: Int, seconds: Int, rpm: Double) {
+        let w = 2.0 * Double.pi * rpm / 60.0
+        var t = Double(from)
+        let end = Double(from + seconds)
+        while t < end {
+            let s = 1.5 * sin(w * t)
+            push(at: t, 0.6 * s, -0.5 * s, 9.81 + 0.62 * s)
+            t += 0.02
+        }
+    }
+}
+
+/// An in-memory journal store with the same contract as the file one.
+private final class MemoryStore: JournalStoring {
+    var files: [String: [String]] = [:]
+    var rewrites = 0
+    var backups = 0
+    var flushes = 0
+    /// When false, appended lines stay "queued" until flush (a slow disk).
+    var autoWrite = true
+    var onFlush: (() -> Void)?
+    var failOnAppend = false
+    private var sinks: [String: MemorySink] = [:]
+
+    final class MemorySink: NSObject, DurableSink {
+        unowned let store: MemoryStore
+        let id: String
+        var failure: Error?
+        private var queue: [String] = []
+        var lost = 0
+        /// Queued AND lost lines: a lost line is never durable, so it stays pending (as the real writer does).
+        var pending: Int { queue.count + lost }
+        init(store: MemoryStore, id: String) { self.store = store; self.id = id }
+        func append(line: String) {
+            if store.failOnAppend {
+                failure = failure ?? NSError(domain: "disk", code: 28)
+                lost += 1
+                return
+            }
+            if store.autoWrite { store.files[id, default: []].append(line) } else { queue.append(line) }
+        }
+        func flush() -> Bool {
+            store.flushes += 1
+            store.files[id, default: []].append(contentsOf: queue)
+            queue.removeAll()
+            store.onFlush?()
+            return failure == nil && lost == 0
+        }
+        func close() -> Bool { true }
+    }
+
+    func open(_ sessionId: String) -> DurableSink {
+        if let s = sinks[sessionId] { return s }
+        let s = MemorySink(store: self, id: sessionId)
+        sinks[sessionId] = s
+        return s
+    }
+    func read(_ sessionId: String) throws -> [String] {
+        onRead?(sessionId)
+        return files[sessionId] ?? []
+    }
+    func rewrite(_ sessionId: String, lines: [String], keepBackup: Bool) throws {
+        rewrites += 1
+        if keepBackup { backups += 1 }
+        files[sessionId] = lines
+    }
+    func clear(_ sessionId: String) throws { files[sessionId] = nil; sinks[sessionId] = nil }
+    func release(_ sessionId: String) {}
+    var active: String?
+    var failMarkActive = false
+    /// Runs on the store queue when a journal is read (a hook to interleave another command).
+    var onRead: ((String) -> Void)?
+    func activeId() -> String? { active }
+    func markActive(_ sessionId: String) throws {
+        if failMarkActive { throw NSError(domain: "pointer", code: 1) }
+        active = sessionId
+    }
+    func clearActive(_ sessionId: String) { if active == sessionId { active = nil } }
+    func list() throws -> [String] {
+        files.values.compactMap { ($0.first.flatMap { JournalCodec.shared.decode(line: $0) } as? JournalRecord.Header)?.sessionId }
+    }
+}
+
+final class RunnerTests: XCTestCase {
+    private let clock = TestClock()
+
+    private func makeEngine(
+        _ provider: FakeProvider, _ store: MemoryStore = MemoryStore(), steps: FakeSteps? = nil,
+        motion: FakeMotion? = nil, cadenceClockMs: (() -> Int64)? = nil
+    ) -> TrackingEngine {
+        let defaultClock: () -> Int64 = { Int64((ProcessInfo.processInfo.systemUptime * 1000).rounded()) }
+        return TrackingEngine(
+            provider: provider, store: store, steps: steps ?? FakeSteps(clock: clock),
+            motion: motion ?? FakeMotion(),
+            monotonicMs: { self.clock.mono }, wallNow: { self.clock.wall },
+            cadenceClockMs: cadenceClockMs ?? defaultClock)
+    }
+
+    private func engineConfig(stride: Double = -1, maxSpeed: Double = 10) -> EngineConfig {
+        EngineConfig(
+            maxAccuracyMeters: 40, maxFixAgeMs: 30_000, silenceAfterMs: 10_000, maxSpeedMps: maxSpeed,
+            minStepMeters: 2, accuracyNoiseFactor: 0.5, stationarySpeedMps: 0.4, maxBridgeMs: 120_000,
+            reanchorAfterRejects: 3, rejectMock: true, pdrEnabled: true, pdrConfirmRatio: 0.5,
+            kalman: false, stopRadiusMeters: 15, stopMinDwellMs: 30_000, initialStrideMeters: stride,
+            pdrTrustedWhenCalibrated: false, recoveryStepEvidenceAfterMs: 30_000)
+    }
+
+    private func config(
+        _ id: String = "s", adaptive: Bool = false, steps: Bool = false, stride: Double = -1, maxSpeed: Double = 10,
+        recover: Bool = false, maxGapMs: Int64 = 0, pedalCadence: Bool = false
+    ) -> StartConfig {
+        StartConfig(
+            pedalCadence: pedalCadence, recoverRunning: recover, maxRecoverGapMs: maxGapMs,
+            stepsEnabled: steps, initialSteps: 0,
+            engine: engineConfig(stride: stride, maxSpeed: maxSpeed),
+            adaptiveSampling: adaptive, batterySaver: false,
+            sessionId: id, startSeq: 0, startSegmentId: 0, intervalMs: 1000, minDistanceMeters: 0,
+            notificationTitle: "t", notificationText: "t")
+    }
+
+    /// Lets the engine queue run what the fake pushed (it is async).
+    private func drain(_ engine: TrackingEngine) { _ = engine.snapshot() }
+
+    private func run<T>(_ body: (@escaping (Result<T, Error>) -> Void) -> Void) throws -> T {
+        let done = expectation(description: "completion")
+        var out: Result<T, Error>?
+        body { result in
+            out = result
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 5)
+        return try XCTUnwrap(out).get()
+    }
+
+    private func runFixes(_ provider: FakeProvider, seconds: Int, from: Int = 0, north0: Double = 0) {
+        for i in from...(from + seconds) {
+            provider.push(north: north0 + Double(i - from) * 3, seconds: Double(i))
+        }
+    }
+
+    // MARK: - Lifecycle
+
+    func testStartPauseResumeStop() throws {
+        let engine = makeEngine(FakeProvider(clock: clock))
+        let started: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        XCTAssertEqual(started.state, .running)
+        let paused: NativeSnapshot = try run { engine.pause(sessionId: "s", completion: $0) }
+        XCTAssertEqual(paused.state, .paused)
+        let resumed: NativeSnapshot = try run { engine.resume(sessionId: "s", completion: $0) }
+        XCTAssertEqual(resumed.state, .running)
+        XCTAssertEqual(resumed.segmentId, 1, "a resume opens a new segment")
+        let stopped: NativeSnapshot = try run { engine.stop(sessionId: "s", completion: $0) }
+        XCTAssertEqual(stopped.state, .stopped)
+    }
+
+    func testMissingBackgroundModeIsAnErrorWithCodeMessageDetails() throws {
+        let provider = FakeProvider(clock: clock)
+        provider.startError = TrackingNativeError.missingBackgroundMode
+        let engine = makeEngine(provider)
+        XCTAssertThrowsError(
+            try { let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) } }()
+        ) { error in
+            let pigeon = error as? PigeonError
+            XCTAssertEqual(pigeon?.code, TrackingErrorCode.missingBackgroundMode)
+            XCTAssertNotNil(pigeon?.message)
+            XCTAssertNotNil(pigeon?.details)
+        }
+    }
+
+    func testPermissionDeniedStartsNothing() throws {
+        let provider = FakeProvider(clock: clock)
+        provider.permission = .denied
+        let engine = makeEngine(provider)
+        let snapshot: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        XCTAssertEqual(snapshot.state, .permissionDenied)
+        XCTAssertEqual(provider.starts, 0)
+    }
+
+    func testFixesBecomeDistanceInTheSnapshotThroughTheKotlinCore() throws {
+        let provider = FakeProvider(clock: clock)
+        let engine = makeEngine(provider)
+        let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        runFixes(provider, seconds: 10)
+        drain(engine)
+        let s = engine.snapshot()
+        XCTAssertEqual(s.distance.totalMeters, 30, accuracy: 0.6)
+        XCTAssertEqual(s.distance.quality, .good)
+        XCTAssertEqual(s.fixCount, 11)
+        XCTAssertEqual(s.distance.activeTimeMs, 10_000, accuracy: 1_100)
+    }
+
+    func testFixesAreNumberedJournaledAndDelivered() throws {
+        let provider = FakeProvider(clock: clock)
+        let store = MemoryStore()
+        let engine = makeEngine(provider, store)
+        let delivered = expectation(description: "two fixes delivered")
+        delivered.expectedFulfillmentCount = 2
+        var seqs: [Int64] = []
+        engine.fixObserver = { fix in
+            seqs.append(fix.seq)
+            delivered.fulfill()
+        }
+        let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        provider.push(north: 0, seconds: 0)
+        provider.push(north: 3, seconds: 1)
+        wait(for: [delivered], timeout: 2)
+        XCTAssertEqual(seqs, [0, 1])
+        let persisted: [NativeFix] = try run { engine.readPersisted(sessionId: "s", afterSeq: -1, completion: $0) }
+        XCTAssertEqual(persisted.map { $0.seq }, [0, 1])
+        XCTAssertTrue(store.files["s"]?.first.flatMap { JournalCodec.shared.decode(line: $0) } is JournalRecord.Header)
+    }
+
+    func testAnInvalidCoordinateIsNotForwarded() throws {
+        let provider = FakeProvider(clock: clock)
+        let engine = makeEngine(provider)
+        var count = 0
+        engine.fixObserver = { _ in count += 1 }
+        let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        provider.push(north: 0, accuracy: -1)
+        XCTAssertEqual(engine.snapshot().fixCount, 0)
+        XCTAssertEqual(count, 0)
+    }
+
+    func testPauseKeepsTheTotalAndResumeNeverBridges() throws {
+        let provider = FakeProvider(clock: clock)
+        let engine = makeEngine(provider)
+        let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        provider.push(north: 0, seconds: 0)
+        provider.push(north: 5, seconds: 1, speed: 4)
+        drain(engine)
+        let before = engine.snapshot().distance.totalMeters
+        let _: NativeSnapshot = try run { engine.pause(sessionId: "s", completion: $0) }
+        clock.seconds = 599
+        let resumed: NativeSnapshot = try run { engine.resume(sessionId: "s", completion: $0) }
+        XCTAssertEqual(resumed.segmentId, 1)
+        provider.push(north: 9000, seconds: 600)
+        drain(engine)
+        XCTAssertEqual(engine.snapshot().distance.totalMeters, before, accuracy: 0.001)
+    }
+
+    func testALocationMeasuredBeforeTheNewLegIsIgnored() throws {
+        let provider = FakeProvider(clock: clock)
+        let engine = makeEngine(provider)
+        let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        provider.push(north: 0, seconds: 0)
+        let _: NativeSnapshot = try run { engine.pause(sessionId: "s", completion: $0) }
+        clock.seconds = 100
+        let _: NativeSnapshot = try run { engine.resume(sessionId: "s", completion: $0) }
+        let count = engine.snapshot().fixCount
+        // A callback queued before the pause: measured at t=50, delivered at t=101.
+        let old = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 10.001, longitude: 106), altitude: 0, horizontalAccuracy: 5,
+            verticalAccuracy: 5, course: -1, speed: 3, timestamp: clock.base.addingTimeInterval(50))
+        clock.seconds = 101
+        provider.delegate?.locationProvider(provider, didUpdate: [old])
+        XCTAssertEqual(engine.snapshot().fixCount, count)
+    }
+
+    func testAShakenPhoneWithoutGpsAddsNothingAndTheReportExplainsWhy() throws {
+        let provider = FakeProvider(clock: clock)
+        let engine = makeEngine(provider)
+        let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        provider.push(north: 0, seconds: 0)
+        drain(engine)
+        engine.submitPdr(sessionId: "s", segmentId: 0, meters: 130)
+        drain(engine)
+        XCTAssertEqual(engine.snapshot().distance.totalMeters, 0) // GPS still good: the estimate is ignored
+        XCTAssertTrue(engine.report().contains("TIMELINE"))
+    }
+
+    func testAdaptiveSamplingChangesTheDisplacementFilterWhenStandingStill() throws {
+        let provider = FakeProvider(clock: clock)
+        let engine = makeEngine(provider)
+        let _: NativeSnapshot = try run { engine.start(config: config(adaptive: true), completion: $0) }
+        for i in 0...60 { provider.push(north: 0, seconds: Double(i), speed: 0) }
+        drain(engine)
+        XCTAssertFalse(provider.requestedMinDistances.isEmpty, "the policy should have asked for a sparser request")
+    }
+
+    // MARK: - Restore
+
+    func testRestoreReplaysTheJournalAndComesBackPausedWithTheSameResult() throws {
+        let store = MemoryStore()
+        let provider = FakeProvider(clock: clock)
+        let first = makeEngine(provider, store)
+        let _: NativeSnapshot = try run { first.start(config: config(), completion: $0) }
+        runFixes(provider, seconds: 10)
+        let live: NativeSnapshot = try run { first.pause(sessionId: "s", completion: $0) }
+
+        let second = makeEngine(FakeProvider(clock: clock), store)  // a new process
+        let restored: NativeSnapshot = try run { second.restore(config: config(), completion: $0) }
+        XCTAssertEqual(restored.state, .paused)
+        XCTAssertEqual(restored.distance.totalMeters, live.distance.totalMeters)
+        XCTAssertEqual(restored.fixCount, live.fixCount)
+        XCTAssertEqual(restored.distance.activeTimeMs, live.distance.activeTimeMs)
+    }
+
+    func testRestoreUsesTheConfigurationStoredInTheJournal() throws {
+        let store = MemoryStore()
+        let provider = FakeProvider(clock: clock)
+        let first = makeEngine(provider, store)
+        let _: NativeSnapshot = try run { first.start(config: config(maxSpeed: 10), completion: $0) }
+        runFixes(provider, seconds: 5)
+        let live: NativeSnapshot = try run { first.pause(sessionId: "s", completion: $0) }
+        let second = makeEngine(FakeProvider(clock: clock), store)
+        // A speed ceiling of 0.5 m/s would reject every fix: the header's configuration must win.
+        let restored: NativeSnapshot = try run { second.restore(config: config(maxSpeed: 0.5), completion: $0) }
+        XCTAssertEqual(restored.distance.totalMeters, live.distance.totalMeters)
+        XCTAssertGreaterThan(restored.distance.totalMeters, 10)
+    }
+
+    func testAHalfWrittenLastRecordIsDroppedAndTheJournalRepaired() throws {
+        let store = MemoryStore()
+        let provider = FakeProvider(clock: clock)
+        let first = makeEngine(provider, store)
+        let _: NativeSnapshot = try run { first.start(config: config(), completion: $0) }
+        runFixes(provider, seconds: 5)
+        drain(first)
+        var lines = store.files["s"] ?? []
+        lines[lines.count - 1] = String(lines[lines.count - 1].dropLast(9))
+        store.files["s"] = lines
+
+        let second = makeEngine(FakeProvider(clock: clock), store)
+        let restored: NativeSnapshot = try run { second.restore(config: config(), completion: $0) }
+        XCTAssertEqual(store.rewrites, 1)
+        XCTAssertTrue(restored.error?.hasPrefix(TrackingErrorCode.journalRepaired) == true, restored.error ?? "nil")
+        XCTAssertEqual(restored.fixCount, 5)
+        XCTAssertTrue((store.files["s"] ?? []).allSatisfy { JournalCodec.shared.decode(line: $0) != nil })
+    }
+
+    func testNothingToRestoreIsAnErrorNotAnEmptySession() throws {
+        let engine = makeEngine(FakeProvider(clock: clock))
+        XCTAssertThrowsError(
+            try { let _: NativeSnapshot = try run { engine.restore(config: config(), completion: $0) } }())
+    }
+
+    func testAnOpenSessionCannotBeClearedAndSessionsCanBeListed() throws {
+        let store = MemoryStore()
+        let engine = makeEngine(FakeProvider(clock: clock), store)
+        let _: NativeSnapshot = try run { engine.start(config: config("a"), completion: $0) }
+        XCTAssertThrowsError(try { let _: Void = try run { engine.clearSession("a", completion: $0) } }())
+        let _: NativeSnapshot = try run { engine.stop(sessionId: "a", completion: $0) }
+        let ids: [String] = try run { engine.listSessions(completion: $0) }
+        XCTAssertEqual(ids, ["a"])
+        let _: Void = try run { engine.clearSession("a", completion: $0) }
+        XCTAssertEqual(store.files["a"] ?? [], [])
+    }
+
+    // MARK: - External cadence (a sensor the host feeds)
+
+    private var cadenceNow: Int64 = 0
+
+    private func cscData(_ count: Int, _ ticks: Int) -> Data {
+        Data([0x02, UInt8(count & 0xFF), UInt8(count >> 8), UInt8(ticks & 0xFF), UInt8(ticks >> 8)])
+    }
+
+    private func externalEngine() -> TrackingEngine {
+        cadenceNow = 0
+        return makeEngine(FakeProvider(clock: clock), cadenceClockMs: { self.cadenceNow })
+    }
+
+    /// A crank at 80 rpm: a revolution every 750 ms, a notification each time.
+    private func crank(_ engine: TrackingEngine, from fromMs: Int64, to toMs: Int64, id: String = "s", conn: Int64 = 1) {
+        var t = fromMs
+        var count = 100
+        var ticks = 1000
+        while t <= toMs {
+            cadenceNow = t
+            engine.pushCsc(sessionId: id, sourceId: "sensor", connectionId: conn, data: cscData(count, ticks))
+            count += 1; ticks += 768; t += 750
+        }
+        drain(engine)
+    }
+
+    func testAnExternalCrankSensorGivesTheCadenceWithoutThePhoneEstimate() throws {
+        let engine = externalEngine()
+        let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        engine.setExternalConnected(sessionId: "s", sourceId: "sensor", connectionId: 1, connected: true)
+        crank(engine, from: 0, to: 3000)
+        let s = engine.snapshot()
+        XCTAssertEqual(s.cadenceStatus, .off)
+        XCTAssertEqual(s.cadenceSource, .externalSensor)
+        XCTAssertEqual(s.pedalCadenceRpm, 80, accuracy: 0.5)
+        XCTAssertEqual(s.distance.totalMeters, 0)
+    }
+
+    func testAStillCrankIsZeroAndLosingTheSensorIsNotZero() throws {
+        let engine = externalEngine()
+        let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        engine.setExternalConnected(sessionId: "s", sourceId: "sensor", connectionId: 1, connected: true)
+        crank(engine, from: 0, to: 3000)
+        var t: Int64 = 3000
+        while t < 8000 {
+            t += 1000
+            cadenceNow = t
+            engine.pushCsc(sessionId: "s", sourceId: "sensor", connectionId: 1, data: cscData(104, 1000 + 4 * 768))
+        }
+        drain(engine)
+        let still = engine.snapshot()
+        XCTAssertEqual(still.cadenceSource, .externalSensor)
+        XCTAssertEqual(still.pedalCadenceRpm, 0)
+        engine.setExternalConnected(sessionId: "s", sourceId: "sensor", connectionId: 1, connected: false)
+        drain(engine)
+        let lost = engine.snapshot()
+        XCTAssertEqual(lost.cadenceSource, .none)
+        XCTAssertLessThan(lost.pedalCadenceRpm, 0)
+    }
+
+    func testAQuietSensorIsUnknownNeverZero() throws {
+        let engine = externalEngine()
+        let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        engine.setExternalConnected(sessionId: "s", sourceId: "sensor", connectionId: 1, connected: true)
+        crank(engine, from: 0, to: 3000)
+        cadenceNow = 10_000
+        let s = engine.snapshot()
+        XCTAssertEqual(s.cadenceSource, .none)
+        XCTAssertLessThan(s.pedalCadenceRpm, 0)
+    }
+
+    func testExternalCadenceOfAnotherSessionOrAFinishedOneIsDropped() throws {
+        let engine = externalEngine()
+        let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        engine.setExternalConnected(sessionId: "other", sourceId: "sensor", connectionId: 1, connected: true)
+        crank(engine, from: 0, to: 3000, id: "other")
+        XCTAssertEqual(engine.snapshot().cadenceSource, .none)
+        let _: NativeSnapshot = try run { engine.stop(sessionId: "s", completion: $0) }
+        engine.setExternalConnected(sessionId: "s", sourceId: "sensor", connectionId: 1, connected: true)
+        crank(engine, from: 4000, to: 7000)
+        XCTAssertLessThan(engine.snapshot().pedalCadenceRpm, 0)
+    }
+
+    func testAPausedSessionShowsNoExternalCadenceAndResumesWithAHealthySensor() throws {
+        let engine = externalEngine()
+        let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        engine.setExternalConnected(sessionId: "s", sourceId: "sensor", connectionId: 1, connected: true)
+        crank(engine, from: 0, to: 3000)
+        let paused: NativeSnapshot = try run { engine.pause(sessionId: "s", completion: $0) }
+        XCTAssertLessThan(paused.pedalCadenceRpm, 0, "no cadence while paused")
+        crank(engine, from: 3750, to: 5250) // the sensor keeps notifying during the pause
+        let resumed: NativeSnapshot = try run { engine.resume(sessionId: "s", completion: $0) }
+        XCTAssertEqual(resumed.cadenceSource, .externalSensor)
+    }
+
+    func testGarbageFromTheHostNeverBreaksTheRecording() throws {
+        let engine = externalEngine()
+        let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        engine.setExternalConnected(sessionId: "s", sourceId: "sensor", connectionId: 1, connected: true)
+        engine.pushCsc(sessionId: "s", sourceId: "sensor", connectionId: 1, data: Data())
+        engine.pushCsc(sessionId: "s", sourceId: "sensor", connectionId: 1, data: Data([0x02, 1]))
+        engine.pushExternalRpm(sessionId: "s", sourceId: "sensor", connectionId: 1, rpm: .nan)
+        engine.pushExternalRpm(sessionId: "s", sourceId: "sensor", connectionId: 1, rpm: 9999)
+        drain(engine)
+        let s = engine.snapshot()
+        XCTAssertEqual(s.state, .running)
+        XCTAssertEqual(s.cadenceSource, .none)
+    }
+
+    // MARK: - Pedal cadence
+
+    func testPedalCadenceFromTheAccelerometerAppearsInTheSnapshotAndNeverInTheDistance() throws {
+        let motion = FakeMotion()
+        let engine = makeEngine(FakeProvider(clock: clock), motion: motion)
+        let started: NativeSnapshot = try run { engine.start(config: config(pedalCadence: true), completion: $0) }
+        XCTAssertEqual(started.cadenceStatus, .active)
+        XCTAssertEqual(motion.starts, 1)
+        XCTAssertLessThan(started.pedalCadenceRpm, 0, "unknown until a window was seen")
+        motion.pedal(from: 0, seconds: 14, rpm: 90)
+        drain(engine)
+        clock.seconds = 14
+        let s = engine.snapshot()
+        XCTAssertEqual(s.pedalCadenceRpm, 90, accuracy: 4, "rpm \(s.pedalCadenceRpm)")
+        XCTAssertEqual(s.distance.totalMeters, 0)
+    }
+
+    func testPedalCadenceIsOffUnlessAskedFor() throws {
+        let motion = FakeMotion()
+        let engine = makeEngine(FakeProvider(clock: clock), motion: motion)
+        let started: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        XCTAssertEqual(started.cadenceStatus, .off)
+        XCTAssertEqual(motion.starts, 0, "the accelerometer is not touched")
+        XCTAssertLessThan(started.pedalCadenceRpm, 0)
+    }
+
+    func testPauseStopsTheAccelerometerAndAPausedSessionHasNoCadence() throws {
+        let motion = FakeMotion()
+        let engine = makeEngine(FakeProvider(clock: clock), motion: motion)
+        let _: NativeSnapshot = try run { engine.start(config: config(pedalCadence: true), completion: $0) }
+        motion.pedal(from: 0, seconds: 14, rpm: 90)
+        drain(engine)
+        clock.seconds = 14
+        XCTAssertGreaterThan(engine.snapshot().pedalCadenceRpm, 0)
+        let stopsBefore = motion.stops
+        let paused: NativeSnapshot = try run { engine.pause(sessionId: "s", completion: $0) }
+        XCTAssertEqual(motion.stops, stopsBefore + 1)
+        XCTAssertLessThan(paused.pedalCadenceRpm, 0, "no cadence while paused")
+        let resumed: NativeSnapshot = try run { engine.resume(sessionId: "s", completion: $0) }
+        XCTAssertEqual(motion.starts, 2)
+        XCTAssertLessThan(resumed.pedalCadenceRpm, 0, "a new segment starts with an empty window")
+    }
+
+    func testAMissingAccelerometerNeverStopsTheRecording() throws {
+        let motion = FakeMotion()
+        motion.available = false
+        let engine = makeEngine(FakeProvider(clock: clock), motion: motion)
+        let started: NativeSnapshot = try run { engine.start(config: config(pedalCadence: true), completion: $0) }
+        XCTAssertEqual(started.state, .running)
+        XCTAssertEqual(started.cadenceStatus, .unavailable)
+        XCTAssertTrue(started.error?.hasPrefix("CADENCE_FAILED") == true, started.error ?? "nil")
+        XCTAssertEqual(motion.starts, 0)
+    }
+
+    func testAFailingAccelerometerIsReportedAndTheRecordingGoesOn() throws {
+        let motion = FakeMotion()
+        let engine = makeEngine(FakeProvider(clock: clock), motion: motion)
+        let _: NativeSnapshot = try run { engine.start(config: config(pedalCadence: true), completion: $0) }
+        motion.fail(.failed("sensor died"))
+        drain(engine)
+        let s = engine.snapshot()
+        XCTAssertEqual(s.cadenceStatus, .failed)
+        XCTAssertEqual(s.state, .running)
+        XCTAssertTrue(s.error?.hasPrefix("CADENCE_FAILED") == true, s.error ?? "nil")
+    }
+
+    // MARK: - Steps
+
+    func testWeakGpsStepsBecomeAPendingEstimateNotDistance() throws {
+        let provider = FakeProvider(clock: clock)
+        let steps = FakeSteps(clock: clock)
+        let engine = makeEngine(provider, steps: steps)
+        let started: NativeSnapshot = try run { engine.start(config: config(steps: true, stride: 1.0), completion: $0) }
+        XCTAssertEqual(started.stepsStatus, .active)
+        provider.push(north: 0, seconds: 0)
+        provider.push(north: 3, seconds: 1, accuracy: 90)  // degraded
+        steps.push(30)
+        drain(engine)
+        let s = engine.snapshot()
+        XCTAssertEqual(s.distance.steps, 30)
+        XCTAssertEqual(s.distance.pendingPdrMeters, 30, accuracy: 1e-6)
+        XCTAssertEqual(s.distance.totalMeters, 0)
+    }
+
+    func testStepsOffByConfigNeverStartTheSensor() throws {
+        let steps = FakeSteps(clock: clock)
+        let engine = makeEngine(FakeProvider(clock: clock), steps: steps)
+        let started: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        XCTAssertEqual(started.stepsStatus, .off)
+        XCTAssertEqual(steps.starts, 0)
+    }
+
+    func testAMissingMotionPermissionOnlyDisablesStepsAndSaysWhy() throws {
+        let steps = FakeSteps(clock: clock)
+        steps.available = .failure(.permissionDenied)
+        let engine = makeEngine(FakeProvider(clock: clock), steps: steps)
+        let started: NativeSnapshot = try run { engine.start(config: config(steps: true), completion: $0) }
+        XCTAssertEqual(started.state, .running)
+        XCTAssertEqual(started.stepsStatus, .permissionDenied)
+        XCTAssertTrue(started.error?.hasPrefix("STEPS_PERMISSION_DENIED") == true, started.error ?? "nil")
+        XCTAssertEqual(steps.starts, 0)
+    }
+
+    func testAMissingUsageDescriptionIsASetupErrorNotACrash() throws {
+        let steps = FakeSteps(clock: clock)
+        steps.available = .failure(.missingUsageDescription)
+        let engine = makeEngine(FakeProvider(clock: clock), steps: steps)
+        let started: NativeSnapshot = try run { engine.start(config: config(steps: true), completion: $0) }
+        XCTAssertEqual(started.stepsStatus, .failed)
+        XCTAssertTrue(started.error?.hasPrefix("MISSING_MOTION_USAGE_DESCRIPTION") == true, started.error ?? "nil")
+    }
+
+    func testARuntimeCoreMotionErrorIsReportedNotSwallowed() throws {
+        let steps = FakeSteps(clock: clock)
+        let engine = makeEngine(FakeProvider(clock: clock), steps: steps)
+        let _: NativeSnapshot = try run { engine.start(config: config(steps: true), completion: $0) }
+        steps.push(10)
+        steps.fail(.permissionDenied)  // access revoked while recording
+        drain(engine)
+        let s = engine.snapshot()
+        XCTAssertEqual(s.stepsStatus, .permissionDenied)
+        XCTAssertTrue(s.error?.hasPrefix("STEPS_PERMISSION_DENIED") == true, s.error ?? "nil")
+        XCTAssertEqual(s.state, .running, "the recording goes on")
+    }
+
+    func testPauseEndsTheSubscriptionAndTheExactCountCorrectsTheTotal() throws {
+        let steps = FakeSteps(clock: clock)
+        steps.autoAnswer = .success(34)
+        let engine = makeEngine(FakeProvider(clock: clock), steps: steps)
+        let _: NativeSnapshot = try run { engine.start(config: config(steps: true), completion: $0) }
+        steps.push(30)
+        let _: NativeSnapshot = try run { engine.pause(sessionId: "s", completion: $0) }
+        drain(engine)
+        XCTAssertEqual(engine.snapshot().distance.steps, 34)
+        steps.push(500)  // a reading after the pause is ignored
+        drain(engine)
+        XCTAssertEqual(engine.snapshot().distance.steps, 34)
+    }
+
+    func testResumeStartsAFreshStepCountAndKeepsTheTotal() throws {
+        let steps = FakeSteps(clock: clock)
+        let engine = makeEngine(FakeProvider(clock: clock), steps: steps)
+        let _: NativeSnapshot = try run { engine.start(config: config(steps: true), completion: $0) }
+        steps.push(30)
+        steps.autoAnswer = .success(30)
+        let _: NativeSnapshot = try run { engine.pause(sessionId: "s", completion: $0) }
+        clock.seconds = 60
+        let _: NativeSnapshot = try run { engine.resume(sessionId: "s", completion: $0) }
+        XCTAssertEqual(steps.starts, 2)
+        steps.push(5)
+        drain(engine)
+        XCTAssertEqual(engine.snapshot().distance.steps, 35)
+    }
+
+    func testStopWaitsForTheExactCountAndReturnsAFinalSnapshot() throws {
+        let steps = FakeSteps(clock: clock)
+        steps.autoAnswer = nil  // hold the OS answer
+        let store = MemoryStore()
+        let engine = makeEngine(FakeProvider(clock: clock), store, steps: steps)
+        let _: NativeSnapshot = try run { engine.start(config: config(steps: true), completion: $0) }
+        steps.push(30)
+        let done = expectation(description: "stop answered")
+        var result: NativeSnapshot?
+        engine.stop(sessionId: "s") { r in
+            result = try? r.get()
+            done.fulfill()
+        }
+        drain(engine)  // the engine asked the OS for the exact count
+        XCTAssertEqual(steps.heldCount, 1)
+        // The answer is still pending: stop must NOT have returned a "final" snapshot yet.
+        XCTAssertNil(result)
+        steps.release(.success(36))
+        wait(for: [done], timeout: 5)
+        let s = try XCTUnwrap(result)
+        XCTAssertEqual(s.state, .stopped)
+        XCTAssertEqual(s.distance.steps, 36)
+        XCTAssertTrue(s.stepsFinal)
+        XCTAssertGreaterThan(store.flushes, 0, "the journal is durable before stop answers")
+    }
+
+    func testStopWithAFailedExactQueryIsNotFinalAndSaysWhy() throws {
+        let steps = FakeSteps(clock: clock)
+        steps.autoAnswer = .failure(.timeout)
+        let engine = makeEngine(FakeProvider(clock: clock), steps: steps)
+        let _: NativeSnapshot = try run { engine.start(config: config(steps: true), completion: $0) }
+        steps.push(30)
+        let s: NativeSnapshot = try run { engine.stop(sessionId: "s", completion: $0) }
+        XCTAssertEqual(s.distance.steps, 30, "the live count stays: a failed query is not 0 steps")
+        XCTAssertFalse(s.stepsFinal)
+        XCTAssertTrue(s.error?.hasPrefix("STEPS_QUERY_TIMEOUT") == true, s.error ?? "nil")
+    }
+
+    func testFinishingWhilePausedStillWaitsForThePausesExactCount() throws {
+        let steps = FakeSteps(clock: clock)
+        steps.autoAnswer = nil
+        let engine = makeEngine(FakeProvider(clock: clock), steps: steps)
+        let _: NativeSnapshot = try run { engine.start(config: config(steps: true), completion: $0) }
+        steps.push(30)
+        let _: NativeSnapshot = try run { engine.pause(sessionId: "s", completion: $0) }  // query held
+        let done = expectation(description: "stop answered")
+        var result: NativeSnapshot?
+        engine.stop(sessionId: "s") { r in
+            result = try? r.get()
+            done.fulfill()
+        }
+        drain(engine)
+        XCTAssertNil(result)
+        steps.release(.success(33))
+        wait(for: [done], timeout: 5)
+        XCTAssertEqual(try XCTUnwrap(result).distance.steps, 33, "pause then finish must not double count or lose the exact answer")
+        XCTAssertTrue(try XCTUnwrap(result).stepsFinal)
+    }
+
+    func testALateExactAnswerOfAnOlderSessionNeverTouchesTheNewOne() throws {
+        let steps = FakeSteps(clock: clock)
+        steps.autoAnswer = nil
+        let store = MemoryStore()
+        let engine = makeEngine(FakeProvider(clock: clock), store, steps: steps)
+        let _: NativeSnapshot = try run { engine.start(config: config("a", steps: true), completion: $0) }
+        steps.push(30)
+        let _: NativeSnapshot = try run { engine.pause(sessionId: "a", completion: $0) }  // query for "a" held
+        // A NEW session starts (same segment id 0, and paused again) before the old answer arrives.
+        let _: NativeSnapshot = try run { engine.start(config: config("b", steps: true), completion: $0) }
+        steps.push(7)
+        let _: NativeSnapshot = try run { engine.pause(sessionId: "b", completion: $0) }
+        XCTAssertEqual(steps.heldCount, 2)
+        steps.release(.success(999), at: 0)  // the answer meant for session "a"
+        drain(engine)
+        XCTAssertEqual(engine.snapshot().distance.steps, 7, "an answer for another session is dropped by identity")
+        steps.release(.success(8), at: 1)  // session "b"'s own answer is applied
+        drain(engine)
+        XCTAssertEqual(engine.snapshot().distance.steps, 8)
+    }
+
+    // MARK: - Finalization and durability
+
+    func testStopIsFinishingUntilTheJournalIsDurableAndOnlyThenStopped() throws {
+        let steps = FakeSteps(clock: clock)
+        steps.autoAnswer = nil
+        let store = MemoryStore()
+        let engine = makeEngine(FakeProvider(clock: clock), store, steps: steps)
+        let _: NativeSnapshot = try run { engine.start(config: config(steps: true), completion: $0) }
+        steps.push(30)
+        let done = expectation(description: "stop answered")
+        var result: NativeSnapshot?
+        engine.stop(sessionId: "s") { r in
+            result = try? r.get()
+            done.fulfill()
+        }
+        drain(engine)
+        // The exact answer is pending: the engine is FINISHING, not stopped, and says its steps are not final.
+        let mid = engine.snapshot()
+        XCTAssertEqual(mid.state, .finishing)
+        XCTAssertFalse(mid.stepsFinal)
+        steps.release(.success(33))
+        wait(for: [done], timeout: 5)
+        XCTAssertEqual(try XCTUnwrap(result).state, .stopped)
+        XCTAssertTrue(try XCTUnwrap(result).stepsFinal)
+    }
+
+    func testTheSnapshotSaysHowManyEventsAreNotOnDiskYet() throws {
+        let provider = FakeProvider(clock: clock)
+        let store = MemoryStore()
+        store.autoWrite = false
+        let engine = makeEngine(provider, store)
+        let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        provider.push(north: 0, seconds: 0)
+        provider.push(north: 3, seconds: 1)
+        drain(engine)
+        XCTAssertGreaterThanOrEqual(engine.snapshot().journalPending, 3)
+        let stopped: NativeSnapshot = try run { engine.stop(sessionId: "s", completion: $0) }
+        XCTAssertEqual(stopped.journalPending, 0)
+    }
+
+    func testADamagedMiddleLineKeepsABackupAndATruncatedTailDoesNot() throws {
+        let store = MemoryStore()
+        let provider = FakeProvider(clock: clock)
+        let first = makeEngine(provider, store)
+        let _: NativeSnapshot = try run { first.start(config: config(), completion: $0) }
+        runFixes(provider, seconds: 6)
+        drain(first)
+        var lines = store.files["s"] ?? []
+        lines[3] = String(lines[3].prefix(10)) + "#" + String(lines[3].dropFirst(11))
+        store.files["s"] = lines
+        let second = makeEngine(FakeProvider(clock: clock), store)  // kept alive: the engine's closures hold it weakly
+        let restored: NativeSnapshot = try run { second.restore(config: config(), completion: $0) }
+        XCTAssertEqual(store.backups, 1, "the only copy must survive the repair")
+        XCTAssertTrue(restored.error?.hasPrefix(TrackingErrorCode.journalCorrupt) == true, restored.error ?? "nil")
+    }
+
+    func testAJournalOfAnotherEngineVersionIsRestoredButSaysSo() throws {
+        let store = MemoryStore()
+        let provider = FakeProvider(clock: clock)
+        let first = makeEngine(provider, store)
+        let _: NativeSnapshot = try run { first.start(config: config(), completion: $0) }
+        runFixes(provider, seconds: 4)
+        drain(first)
+        var lines = store.files["s"] ?? []
+        let h = try XCTUnwrap(JournalCodec.shared.decode(line: lines[0]) as? JournalRecord.Header)
+        let changed = JournalRecord.Header(
+            version: h.version, engineVersion: h.engineVersion + 1, sessionId: h.sessionId, atMs: h.atMs,
+            wallAtMs: h.wallAtMs, segmentId: h.segmentId, initialSteps: h.initialSteps, settings: h.settings,
+            extras: h.extras)
+        lines[0] = JournalCodec.shared.encode(r: changed)
+        store.files["s"] = lines
+        let second = makeEngine(FakeProvider(clock: clock), store)
+        let restored: NativeSnapshot = try run { second.restore(config: config(), completion: $0) }
+        XCTAssertEqual(restored.state, .paused)
+        XCTAssertTrue(restored.error?.hasPrefix(TrackingErrorCode.engineChanged) == true, restored.error ?? "nil")
+    }
+
+    func testAFinishedSessionRestoresAsStoppedNotPausedWithItsFinality() throws {
+        let steps = FakeSteps(clock: clock)
+        steps.autoAnswer = .success(33)
+        let store = MemoryStore()
+        let provider = FakeProvider(clock: clock)
+        let first = makeEngine(provider, store, steps: steps)
+        let _: NativeSnapshot = try run { first.start(config: config(steps: true), completion: $0) }
+        runFixes(provider, seconds: 5)
+        steps.push(30)
+        let live: NativeSnapshot = try run { first.stop(sessionId: "s", completion: $0) }
+        XCTAssertTrue(live.stepsFinal)
+        let second = makeEngine(FakeProvider(clock: clock), store)
+        let restored: NativeSnapshot = try run { second.restore(config: config(steps: true), completion: $0) }
+        XCTAssertEqual(restored.state, .stopped, "a finished session is read-only, never paused")
+        XCTAssertTrue(restored.stepsFinal)
+        XCTAssertEqual(restored.distance.steps, live.distance.steps)
+        XCTAssertEqual(restored.distance.totalMeters, live.distance.totalMeters)
+    }
+
+    func testAFinishWhoseExactQueryFailedRestoresWithProvisionalSteps() throws {
+        let steps = FakeSteps(clock: clock)
+        steps.autoAnswer = .failure(.timeout)
+        let store = MemoryStore()
+        let first = makeEngine(FakeProvider(clock: clock), store, steps: steps)
+        let _: NativeSnapshot = try run { first.start(config: config(steps: true), completion: $0) }
+        steps.push(30)
+        let live: NativeSnapshot = try run { first.stop(sessionId: "s", completion: $0) }
+        XCTAssertFalse(live.stepsFinal)
+        let second = makeEngine(FakeProvider(clock: clock), store)
+        let restored: NativeSnapshot = try run { second.restore(config: config(steps: true), completion: $0) }
+        XCTAssertEqual(restored.state, .stopped)
+        XCTAssertFalse(restored.stepsFinal, "the live count was never confirmed: it must not become exact by being restored")
+    }
+
+    func testALateSecondExactAnswerNeverChangesAFinalResult() throws {
+        let steps = FakeSteps(clock: clock)
+        steps.autoAnswer = nil
+        let engine = makeEngine(FakeProvider(clock: clock), steps: steps)
+        let _: NativeSnapshot = try run { engine.start(config: config(steps: true), completion: $0) }
+        steps.push(30)
+        let done = expectation(description: "stop answered")
+        var result: NativeSnapshot?
+        engine.stop(sessionId: "s") { r in
+            result = try? r.get()
+            done.fulfill()
+        }
+        drain(engine)
+        steps.release(.success(36), at: 0)  // the real answer
+        wait(for: [done], timeout: 5)
+        steps.release(.success(999), at: 0)  // a provider answering AGAIN, long after the result was published
+        drain(engine)
+        XCTAssertEqual(try XCTUnwrap(result).distance.steps, 36)
+        XCTAssertEqual(engine.snapshot().distance.steps, 36, "a published final result is never silently rewritten")
+    }
+
+    func testTheRestoreOutcomeIsAStructuredField() throws {
+        let store = MemoryStore()
+        let provider = FakeProvider(clock: clock)
+        let first = makeEngine(provider, store)
+        let _: NativeSnapshot = try run { first.start(config: config(), completion: $0) }
+        runFixes(provider, seconds: 6)
+        drain(first)
+        XCTAssertEqual(first.snapshot().restoreState, .notRestored)
+        let a = makeEngine(FakeProvider(clock: clock), store)
+        XCTAssertEqual(try run { (c: @escaping (Result<NativeSnapshot, Error>) -> Void) in a.restore(config: config(), completion: c) }.restoreState, .complete)
+        var lines = store.files["s"] ?? []
+        lines[lines.count - 1] = String(lines[lines.count - 1].dropLast(5))
+        store.files["s"] = lines
+        let b = makeEngine(FakeProvider(clock: clock), store)
+        XCTAssertEqual(try run { (c: @escaping (Result<NativeSnapshot, Error>) -> Void) in b.restore(config: config(), completion: c) }.restoreState, .tailRepaired)
+        var damaged = store.files["s"] ?? []
+        damaged[2] = String(damaged[2].prefix(10)) + "#" + String(damaged[2].dropFirst(11))
+        store.files["s"] = damaged
+        let c = makeEngine(FakeProvider(clock: clock), store)
+        let partial: NativeSnapshot = try run { c.restore(config: config(), completion: $0) }
+        XCTAssertEqual(partial.restoreState, .partial)
+        XCTAssertLessThan(partial.fixCount, 6, "everything after the damage was NOT applied")
+    }
+
+    // MARK: - Operation identity and per-segment finality (recheck R07, R08)
+
+    func testASecondStopJoinsTheFinishInProgress() throws {
+        let steps = FakeSteps(clock: clock)
+        steps.autoAnswer = nil
+        let engine = makeEngine(FakeProvider(clock: clock), steps: steps)
+        let _: NativeSnapshot = try run { engine.start(config: config(steps: true), completion: $0) }
+        steps.push(30)
+        let first = expectation(description: "first stop")
+        let second = expectation(description: "second stop")
+        var a: NativeSnapshot?
+        var b: NativeSnapshot?
+        engine.stop(sessionId: "s") { a = try? $0.get(); first.fulfill() }
+        engine.stop(sessionId: "s") { b = try? $0.get(); second.fulfill() }
+        drain(engine)
+        XCTAssertEqual(steps.heldCount, 1, "one finalization: the second stop did not start another query")
+        steps.release(.success(33))
+        wait(for: [first, second], timeout: 5)
+        XCTAssertEqual(try XCTUnwrap(a).state, .stopped)
+        XCTAssertEqual(try XCTUnwrap(b).state, .stopped, "the joiner gets the same final result, not a FINISHING snapshot")
+        XCTAssertTrue(try XCTUnwrap(b).stepsFinal)
+    }
+
+    func testANewStartDuringAFinishAnswersTheOldStopWithAnExplicitFailure() throws {
+        let steps = FakeSteps(clock: clock)
+        steps.autoAnswer = nil
+        let engine = makeEngine(FakeProvider(clock: clock), steps: steps)
+        let _: NativeSnapshot = try run { engine.start(config: config("a", steps: true), completion: $0) }
+        steps.push(30)
+        let stopped = expectation(description: "old stop answered")
+        var outcome: Result<NativeSnapshot, Error>?
+        engine.stop(sessionId: "a") { outcome = $0; stopped.fulfill() }
+        drain(engine)
+        let b: NativeSnapshot = try run { engine.start(config: config("b", steps: true), completion: $0) }
+        wait(for: [stopped], timeout: 5)
+        guard case .failure(let error)? = outcome else { return XCTFail("the superseded stop must fail, not succeed") }
+        XCTAssertEqual((error as? PigeonError)?.code, TrackingErrorCode.superseded)
+        XCTAssertEqual(b.state, .running)
+        steps.release(.success(999), at: 0)  // the old session's late answer
+        drain(engine)
+        XCTAssertEqual(engine.snapshot().state, .running)
+        XCTAssertEqual(engine.snapshot().sessionId, "b")
+        XCTAssertEqual(engine.snapshot().distance.steps, 0, "nothing of session a reaches session b")
+    }
+
+    func testAProvisionalSegmentIsNotUpgradedByALaterExactOne() throws {
+        let steps = FakeSteps(clock: clock)
+        steps.autoAnswer = .failure(.timeout)  // segment 0: the exact query fails
+        let engine = makeEngine(FakeProvider(clock: clock), steps: steps)
+        let _: NativeSnapshot = try run { engine.start(config: config(steps: true), completion: $0) }
+        steps.push(10)
+        let _: NativeSnapshot = try run { engine.pause(sessionId: "s", completion: $0) }
+        steps.autoAnswer = .success(5)  // segment 1 will be exact
+        let _: NativeSnapshot = try run { engine.resume(sessionId: "s", completion: $0) }
+        steps.push(5)
+        let final: NativeSnapshot = try run { engine.stop(sessionId: "s", completion: $0) }
+        XCTAssertEqual(final.state, .stopped)
+        XCTAssertFalse(final.stepsFinal, "segment 0 stayed provisional: the total cannot be final")
+    }
+
+    func testAJournalWriteFailureIsReportedAndNeverLooksDurable() throws {
+        let store = MemoryStore()
+        store.failOnAppend = true
+        let engine = makeEngine(FakeProvider(clock: clock), store)
+        let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        let s: NativeSnapshot = try run { engine.stop(sessionId: "s", completion: $0) }
+        XCTAssertTrue(s.journalFailed)
+        XCTAssertGreaterThan(s.journalPending, 0, "lost lines stay pending: not durable")
+        XCTAssertNotNil(s.error)
+    }
+
+    func testAnErrorAfterPauseIsIgnored() throws {
+        let provider = FakeProvider(clock: clock)
+        let engine = makeEngine(provider)
+        let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        let _: NativeSnapshot = try run { engine.pause(sessionId: "s", completion: $0) }
+        engine.locationProvider(provider, didFailWith: NSError(domain: kCLErrorDomain, code: CLError.denied.rawValue))
+        drain(engine)
+        XCTAssertEqual(engine.snapshot().state, .paused, "a late location error must not turn a paused session into an error")
+    }
+
+    // MARK: - The core decides what a restore may trust (recheck: semantic corruption, old header)
+
+    func testACrcValidButImpossibleRecordIsPartialAndRemovedBeforeAppending() throws {
+        let store = MemoryStore()
+        let provider = FakeProvider(clock: clock)
+        let first = makeEngine(provider, store)
+        let _: NativeSnapshot = try run { first.start(config: config(), completion: $0) }
+        runFixes(provider, seconds: 5)
+        let _: NativeSnapshot = try run { first.pause(sessionId: "s", completion: $0) }
+        let good = (store.files["s"] ?? []).count
+        // CRC-valid, but a resume that reuses segment 0 can never be applied.
+        store.files["s", default: []].append(JournalCodec.shared.encode(r: JournalRecord.Resume(atMs: clock.mono + 9_000, segmentId: 0)))
+
+        let second = makeEngine(FakeProvider(clock: clock), store)
+        let restored: NativeSnapshot = try run { second.restore(config: config(), completion: $0) }
+        XCTAssertEqual(restored.restoreState, .partial)
+        XCTAssertTrue(restored.error?.hasPrefix(TrackingErrorCode.journalCorrupt) == true, restored.error ?? "nil")
+        XCTAssertEqual((store.files["s"] ?? []).count, good, "appends continue from a replayable prefix")
+        XCTAssertEqual(store.backups, 1, "the original is kept")
+    }
+
+    func testAVersionOneHeaderIsMigratedBeforeItIsAppendedTo() throws {
+        let store = MemoryStore()
+        let provider = FakeProvider(clock: clock)
+        let first = makeEngine(provider, store)
+        let _: NativeSnapshot = try run { first.start(config: config(), completion: $0) }
+        runFixes(provider, seconds: 5)
+        let _: NativeSnapshot = try run { first.pause(sessionId: "s", completion: $0) }
+        var lines = store.files["s"] ?? []
+        let h = try XCTUnwrap(JournalCodec.shared.decode(line: lines[0]) as? JournalRecord.Header)
+        let old = JournalRecord.Header(
+            version: 1, engineVersion: 1, sessionId: h.sessionId, atMs: h.atMs, wallAtMs: h.wallAtMs,
+            segmentId: h.segmentId, initialSteps: h.initialSteps, settings: h.settings, extras: h.extras)
+        lines[0] = JournalCodec.shared.encode(r: old)
+        store.files["s"] = lines
+
+        let second = makeEngine(FakeProvider(clock: clock), store)
+        let restored: NativeSnapshot = try run { second.restore(config: config(), completion: $0) }
+        XCTAssertTrue(restored.engineChanged, "the old part was recorded by another engine: still reported")
+        let migrated = try XCTUnwrap(JournalCodec.shared.decode(line: (store.files["s"] ?? [])[0]) as? JournalRecord.Header)
+        XCTAssertEqual(migrated.version, JournalCodec.shared.VERSION)
+        XCTAssertEqual(store.backups, 1)
+    }
+
+    // MARK: - Process-death recovery (the clock, the open-session pointer, collecting again)
+
+    func testTheOpenSessionPointerFollowsTheSession() throws {
+        let store = MemoryStore()
+        let engine = makeEngine(FakeProvider(clock: clock), store)
+        let none: NativeSnapshot? = try run { engine.recoverActive(completion: $0) }
+        XCTAssertNil(none)
+        let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        XCTAssertEqual(store.active, "s")
+        let _: NativeSnapshot = try run { engine.stop(sessionId: "s", completion: $0) }
+        XCTAssertNil(store.active, "a finished session is not open any more")
+    }
+
+    func testARecoveredSessionContinuesRecordingAndCreditsTheDeadInterval() throws {
+        let store = MemoryStore()
+        let provider = FakeProvider(clock: clock)
+        let dying = makeEngine(provider, store)
+        let _: NativeSnapshot = try run { dying.start(config: config(), completion: $0) }
+        runFixes(provider, seconds: 10)
+        drain(dying)
+        let before = dying.snapshot().distance.totalMeters
+
+        // The process dies; 30 s later a NEW process finds the open session and continues it.
+        clock.seconds += 30
+        let reborn = FakeProvider(clock: clock)
+        let engine = makeEngine(reborn, store)
+        let recovered: NativeSnapshot? = try run { engine.recoverActive(completion: $0) }
+        let snapshot = try XCTUnwrap(recovered)
+        XCTAssertEqual(snapshot.state, .running)
+        XCTAssertEqual(snapshot.segmentId, 1, "a new segment: nothing is bridged across the dead interval")
+        XCTAssertGreaterThanOrEqual(snapshot.recoveredGapMs, 29_000)
+        XCTAssertEqual(snapshot.collection, .collecting)
+        XCTAssertEqual(reborn.starts, 1, "location collection was started again")
+        XCTAssertEqual(snapshot.distance.totalMeters, before, accuracy: 1e-6, "no distance is invented")
+        XCTAssertGreaterThanOrEqual(snapshot.distance.activeTimeMs, 39_000)
+        XCTAssertGreaterThanOrEqual(snapshot.elapsedTimeMs, 39_000)
+    }
+
+    func testAPausedSessionStaysPausedButItsElapsedTimeKeepsGrowing() throws {
+        let store = MemoryStore()
+        let provider = FakeProvider(clock: clock)
+        let dying = makeEngine(provider, store)
+        let _: NativeSnapshot = try run { dying.start(config: config(), completion: $0) }
+        runFixes(provider, seconds: 10)
+        let _: NativeSnapshot = try run { dying.pause(sessionId: "s", completion: $0) }
+        clock.seconds += 60
+        let engine = makeEngine(FakeProvider(clock: clock), store)
+        let recovered: NativeSnapshot? = try run { engine.recoverActive(completion: $0) }
+        let snapshot = try XCTUnwrap(recovered)
+        XCTAssertEqual(snapshot.state, .paused)
+        XCTAssertEqual(snapshot.collection, .notCollecting)
+        XCTAssertGreaterThanOrEqual(snapshot.elapsedTimeMs, 69_000)
+        XCTAssertLessThanOrEqual(snapshot.distance.activeTimeMs, 11_000, "pauses are not workout time")
+    }
+
+    func testARecordingThatCannotStartLocationSaysSoInsteadOfLookingNormal() throws {
+        let store = MemoryStore()
+        let provider = FakeProvider(clock: clock)
+        let dying = makeEngine(provider, store)
+        let _: NativeSnapshot = try run { dying.start(config: config(), completion: $0) }
+        clock.seconds += 5
+        let blocked = FakeProvider(clock: clock)
+        blocked.startError = TrackingNativeError.missingBackgroundMode
+        let engine = makeEngine(blocked, store)
+        let recovered: NativeSnapshot? = try run { engine.recoverActive(completion: $0) }
+        XCTAssertEqual(try XCTUnwrap(recovered).collection, .blocked)
+    }
+
+    func testAPauseIsNotAcknowledgedUntilItIsDurable() throws {
+        let store = MemoryStore()
+        let engine = makeEngine(FakeProvider(clock: clock), store)
+        let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) }
+        store.failOnAppend = true  // from now on nothing reaches the disk
+        XCTAssertThrowsError(
+            try { let _: NativeSnapshot = try run { engine.pause(sessionId: "s", completion: $0) } }()
+        ) { error in
+            XCTAssertEqual((error as? PigeonError)?.code, TrackingErrorCode.pauseFailed)
+        }
+    }
+
+    func testStartFailsWhenTheOpenSessionPointerCannotBeWritten() throws {
+        let store = MemoryStore()
+        store.failMarkActive = true
+        let engine = makeEngine(FakeProvider(clock: clock), store)
+        XCTAssertThrowsError(
+            try { let _: NativeSnapshot = try run { engine.start(config: config(), completion: $0) } }()
+        ) { error in
+            XCTAssertEqual((error as? PigeonError)?.code, TrackingErrorCode.startFailed)
+        }
+        XCTAssertEqual(engine.snapshot().state, .idle, "a recording nothing could recover is not started")
+    }
+
+    func testARecoveryDecidedBeforeANewStartNeverReplacesTheNewSession() throws {
+        let store = MemoryStore()
+        let dyingProvider = FakeProvider(clock: clock)
+        let dying = makeEngine(dyingProvider, store)
+        let _: NativeSnapshot = try run { dying.start(config: config("a"), completion: $0) }
+        clock.seconds += 5
+        let provider = FakeProvider(clock: clock)
+        let engine = makeEngine(provider, store)
+        let started = expectation(description: "B started")
+        // While the recovery reads A's journal, the person starts B.
+        store.onRead = { id in
+            guard id == "a" else { return }
+            store.onRead = nil
+            engine.start(config: self.config("b")) { _ in started.fulfill() }
+        }
+        let recovered: NativeSnapshot? = try run { engine.recoverActive(completion: $0) }
+        wait(for: [started], timeout: 5)
+        XCTAssertEqual(try XCTUnwrap(recovered).sessionId, "b", "the session the person started wins")
+        XCTAssertEqual(engine.snapshot().sessionId, "b")
+        XCTAssertEqual(engine.snapshot().state, .running)
+        XCTAssertEqual(provider.stops, 0, "B's location updates were not stopped by the older recovery")
+    }
+
+    func testAPauseWaitingToBePersistedNeverAnswersWithAnotherSessionsSnapshot() throws {
+        let store = MemoryStore()
+        let provider = FakeProvider(clock: clock)
+        let engine = makeEngine(provider, store)
+        let _: NativeSnapshot = try run { engine.start(config: config("a"), completion: $0) }
+        let startedB = expectation(description: "B started")
+        store.onFlush = {
+            store.onFlush = nil
+            engine.start(config: self.config("b")) { _ in startedB.fulfill() }
+        }
+        XCTAssertThrowsError(
+            try { let _: NativeSnapshot = try run { engine.pause(sessionId: "a", completion: $0) } }()
+        ) { error in
+            XCTAssertEqual((error as? PigeonError)?.code, TrackingErrorCode.superseded)
+        }
+        wait(for: [startedB], timeout: 5)
+    }
+}

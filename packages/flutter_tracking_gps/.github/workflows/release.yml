@@ -1,0 +1,179 @@
+name: Release flutter_tracking_gps
+
+# A normal push does NOT release. Only a push whose (latest) commit message contains
+# [release:flutter_tracking_gps] does, or a manual run, on main or on a feature/* branch.
+#   - main: any version (pub.dev + git tag + GitHub Release).
+#   - feature/*: git tag + GitHub pre-release ONLY, nothing goes to pub.dev. The pubspec.yaml version must be a
+#     pre-release (contains "-", e.g. 1.2.0-beta.1), so a test tag can never take a stable version number.
+#     Install it with a git dependency whose ref is the tag (a plain version number only resolves from pub.dev).
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[release:flutter_tracking_gps]')
+    # macOS: the iOS XCFramework of the shared Kotlin core can only be built here, and it must ship in the package.
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # Gates: nothing is published unless every layer passes.
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Dart tests
+        run: flutter test
+
+      - name: Core tests (Kotlin)
+        working-directory: tracking-core
+        run: ./gradlew --no-daemon jvmTest
+
+      - name: Build the iOS XCFramework (release)
+        run: tool/build_core.sh release
+
+      - name: Verify the XCFramework slices
+        run: |
+          set -e
+          FW=ios/Frameworks/TrackingCore.xcframework
+          for slice in ios-arm64 ios-arm64_x86_64-simulator; do
+            if [ ! -d "$FW/$slice" ]; then
+              echo "❌ missing slice $slice in $FW"
+              ls "$FW"
+              exit 1
+            fi
+          done
+          echo "✅ slices present"; ls "$FW"
+
+      - name: Build the example app for the iOS simulator
+        working-directory: example
+        run: flutter build ios --simulator --no-codesign
+
+      - name: Read package version
+        id: version
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: *//')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+
+          if [[ "$VERSION" == *"-"* ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "Detected Pre-release version: $VERSION"
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "Detected Release version: $VERSION"
+          fi
+
+      - name: Feature branches release pre-release versions only
+        if: github.ref != 'refs/heads/main'
+        run: |
+          if [ "${{ steps.version.outputs.is_prerelease }}" != "true" ]; then
+            echo "❌ ${{ github.ref_name }} is not main: pubspec version must be a pre-release (e.g. 1.2.0-beta.1)"
+            exit 1
+          fi
+
+      - name: Check if tag exists
+        run: |
+          if git rev-parse "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "❌ Tag ${{ steps.version.outputs.tag }} already exists"
+            exit 1
+          fi
+
+      - name: Generate release notes from CHANGELOG
+        id: notes
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+
+          if ! grep -qxF "## $TAG" CHANGELOG.md; then
+            echo "❌ No changelog entry found for $TAG"
+            exit 1
+          fi
+
+          awk -v ver="## $TAG" '
+            $0 == ver { flag=1; next }
+            /^## v/ && flag { exit }
+            flag
+          ' CHANGELOG.md > "$RUNNER_TEMP/release.md"
+
+          echo "📄 Release notes:"
+          cat "$RUNNER_TEMP/release.md"
+
+      # The build/analyze steps above may rewrite checked-in files (CocoaPods and Xcode project migrations).
+      # The checkout equals the released commit, so restoring them is safe, and pub then sees a clean tree
+      # (a dirty tree is a validation WARNING, and a warning fails the dry run). Ignored files, such as
+      # the XCFramework built above, are untouched.
+      - name: Restore checked-in files changed by the build steps
+        run: git checkout -- .
+
+      - name: Validate package (dry run)
+        run: |
+          set -o pipefail
+          flutter pub publish --dry-run 2>&1 | tee "$RUNNER_TEMP/dryrun.txt"
+
+      - name: Verify the XCFramework is inside the package
+        run: |
+          grep -q "TrackingCore.xcframework" "$RUNNER_TEMP/dryrun.txt" || { echo "❌ TrackingCore.xcframework is not part of the package"; exit 1; }
+
+      # pub looks for its credentials in a per-OS folder: ~/.config/dart on Linux, but
+      # ~/Library/Application Support/dart on macOS (this job runs on macOS). Write both.
+      - name: Write pub credentials
+        if: github.ref == 'refs/heads/main'
+        env:
+          PUB_CREDENTIALS: ${{ secrets.PUB_CREDENTIALS }}
+        run: |
+          if [ -z "$PUB_CREDENTIALS" ]; then
+            echo "❌ The PUB_CREDENTIALS secret is empty or missing"
+            exit 1
+          fi
+          for dir in "$HOME/.config/dart" "$HOME/Library/Application Support/dart"; do
+            mkdir -p "$dir"
+            printf '%s' "$PUB_CREDENTIALS" > "$dir/pub-credentials.json"
+          done
+
+      - name: Publish to pub.dev
+        if: github.ref == 'refs/heads/main'
+        run: flutter pub publish --force
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create and push git tag
+        run: |
+          git tag ${{ steps.version.outputs.tag }}
+          git push origin ${{ steps.version.outputs.tag }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.tag }}
+          body_path: ${{ runner.temp }}/release.md
+          prerelease: ${{ steps.version.outputs.is_prerelease }}
