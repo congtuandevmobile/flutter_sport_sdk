@@ -77,6 +77,9 @@ class ChallengeRunner(
                 throw ChallengeException("SESSION_OPEN", "challenge $sessionId is still open")
             }
             if (id.isBlank()) throw ChallengeException("BAD_SESSION", "the session id is empty")
+            // A session id is used ONCE: lines appended behind another challenge's journal would be restored as that challenge.
+            val existing = try { store.read(id) } catch (e: IOException) { throw ChallengeException("JOURNAL_WRITE_FAILED", e.message ?: "I/O error") }
+            if (existing.isNotEmpty()) throw ChallengeException("SESSION_EXISTS", "a journal already exists for $id: clear it or use another id")
             val core = try { toCore(definition) } catch (e: IllegalArgumentException) {
                 throw ChallengeException("BAD_DEFINITION", e.message ?: "the definition breaks its rules")
             }
@@ -107,12 +110,12 @@ class ChallengeRunner(
     fun pause(id: String): NativeChallengeSnapshot = command(id) { s, at -> s.pause(at) }
     fun resume(id: String): NativeChallengeSnapshot = command(id) { s, at -> s.resume(at) }
 
-    fun submitCounter(id: String, sourceId: String, epoch: Long, meters: Double, ageMs: Long) {
-        feed(id) { s, at -> s.onCounter(sourceId, epoch, meters, at - maxOf(0L, ageMs)) }
+    fun submitCounter(id: String, sourceId: String, epoch: Long, meters: Double, ageMs: Long, receivedMonotonicMs: Long? = null) {
+        feed(id, receivedMonotonicMs) { s, at -> s.onCounter(sourceId, epoch, meters, at - maxOf(0L, ageMs)) }
     }
 
-    fun submitDelta(id: String, sourceId: String, eventId: String, delta: Double, ageMs: Long, stageActivation: Long? = null) {
-        feed(id) { s, at ->
+    fun submitDelta(id: String, sourceId: String, eventId: String, delta: Double, ageMs: Long, stageActivation: Long? = null, receivedMonotonicMs: Long? = null) {
+        feed(id, receivedMonotonicMs) { s, at ->
             s.onDelta(sourceId, eventId, delta, at - maxOf(0L, ageMs), stageActivation ?: ChallengeSession.CURRENT_ACTIVATION)
         }
     }
@@ -192,21 +195,36 @@ class ChallengeRunner(
             val result = block(s, now())
             result.refusal?.let { throw ChallengeException(it.name, "the challenge refused: ${it.name}") }
             persist(result.events)
+            releaseActiveIfCompleted(s)
         }
         return publishedSnapshot()
     }
 
-    /** A sample: dropped when it is not for the open session or when the rules refuse it. */
-    private fun feed(id: String, block: (ChallengeSession, Long) -> ChallengeResult) {
+    /** The phone's monotonic time NOW: the plugin takes it when a sample ARRIVES, before the sample waits in the queue. */
+    fun receivedAt(): Long = monotonicMs()
+
+    /**
+     * A sample: dropped when it is not for the open session or when the rules refuse it. [receivedMonotonicMs] is when it arrived (see
+     * [receivedAt]); its time is that minus its age, NOT the time the queue got to it, so a callback that waited behind a stage change
+     * still belongs to the interval it was measured in.
+     */
+    private fun feed(id: String, receivedMonotonicMs: Long?, block: (ChallengeSession, Long) -> ChallengeResult) {
         val changed: Boolean
         synchronized(lock) {
             val s = session
             if (s == null || sessionId != id) return
-            val result = block(s, now())
+            val result = block(s, receivedMonotonicMs?.let { it + shiftMs } ?: now())
             persist(result.events)
+            releaseActiveIfCompleted(s)
             changed = result.events.isNotEmpty()
         }
         if (changed) publish()
+    }
+
+    /** A completed challenge is not the one to recover: the active pointer goes, but only once the completion is really on the disk. */
+    private fun releaseActiveIfCompleted(s: ChallengeSession) {
+        if (s.currentState != ChallengeState.COMPLETED || journalFailed) return
+        try { store.setActive(null) } catch (e: IOException) { fail(e) }
     }
 
     private fun persist(events: List<ChallengeEvent>) {

@@ -1,4 +1,7 @@
 ## Unreleased
+- Fix: a session id is used once. `start` with an id whose journal exists is refused with `SESSION_EXISTS` (nothing is appended behind the old journal); `clearSession` frees the id.
+- Fix: a completed challenge releases the active pointer (`activeSessionId()` is null), but only after the completion is on the disk.
+- Fix: a sample is timed when it ARRIVED at the plugin (minus its age), not when the executor gets to it, on Android and iOS.
 - Fix (race integrity): event time decides, not arrival time. A measurement made before the stage started or before the last resume is dropped BEFORE it can touch a baseline (`TIME_BACKWARDS`), for counters and for manual deltas: late callbacks can no longer credit what moved while paused.
 - Behaviour change (strict stage boundary): a new stage, and every resume, starts WITHOUT a baseline; the first measurement after it is only a baseline. A counter seen before the activation is never used, so a stage is never credited with distance it cannot prove. The price: the distance before a source's first sample of a stage is not credited.
 - A source that takes over a stage (the active one went stale) credits nothing with its first delta.

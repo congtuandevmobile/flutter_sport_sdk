@@ -89,11 +89,13 @@ class FlutterWorkoutPlugin : FlutterPlugin, WorkoutHostApi, WorkoutSink {
 
     /** A sample: queued behind the commands that came before it, never blocking the caller. */
     override fun submitCounter(sessionId: String, source: NativeSourceRef, epoch: Long, meters: Double, ageMs: Long) {
-        executor?.execute { engine?.submitCounter(sessionId, source, epoch, meters, ageMs) }
+        val receivedAt = engine?.receivedAt() // stamped HERE, on arrival: not when the queue gets to it
+        executor?.execute { engine?.submitCounter(sessionId, source, epoch, meters, ageMs, receivedAt) }
     }
 
     override fun submitSpeed(sessionId: String, source: NativeSourceRef, epoch: Long, mps: Double, ageMs: Long) {
-        executor?.execute { engine?.submitSpeed(sessionId, source, epoch, mps, ageMs) }
+        val receivedAt = engine?.receivedAt()
+        executor?.execute { engine?.submitSpeed(sessionId, source, epoch, mps, ageMs, receivedAt) }
     }
 
     override fun onSnapshot(snapshot: NativeWorkoutSnapshot) {

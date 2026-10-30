@@ -80,13 +80,15 @@ public final class FlutterChallengePlugin: NSObject, FlutterPlugin, ChallengeHos
 
     /// A sample: queued behind the commands that came before it, never blocking the caller.
     func submitCounter(sessionId: String, sourceId: String, epoch: Int64, meters: Double, ageMs: Int64) throws {
+        let receivedAt = engine?.receivedAt() // stamped HERE, on arrival: not when the queue gets to it
         calls.async { [weak self] in
-            self?.engine?.submitCounter(sessionId: sessionId, sourceId: sourceId, epoch: epoch, meters: meters, ageMs: ageMs)
+            self?.engine?.submitCounter(sessionId: sessionId, sourceId: sourceId, epoch: epoch, meters: meters, ageMs: ageMs, receivedMonotonicMs: receivedAt)
         }
     }
     func submitDelta(sessionId: String, sourceId: String, eventId: String, delta: Double, ageMs: Int64, stageActivation: Int64?) throws {
+        let receivedAt = engine?.receivedAt()
         calls.async { [weak self] in
-            self?.engine?.submitDelta(sessionId: sessionId, sourceId: sourceId, eventId: eventId, delta: delta, ageMs: ageMs, stageActivation: stageActivation)
+            self?.engine?.submitDelta(sessionId: sessionId, sourceId: sourceId, eventId: eventId, delta: delta, ageMs: ageMs, stageActivation: stageActivation, receivedMonotonicMs: receivedAt)
         }
     }
 

@@ -77,6 +77,12 @@ final class ChallengeRunner {
                 throw ChallengeError(code: "SESSION_OPEN", message: "challenge \(sessionId ?? "") is still open")
             }
             if id.trimmingCharacters(in: .whitespaces).isEmpty { throw ChallengeError(code: "BAD_SESSION", message: "the session id is empty") }
+            // A session id is used ONCE: lines appended behind another challenge's journal would be restored as that challenge.
+            let existing: [String]
+            do { existing = try store.read(sessionId: id) } catch {
+                throw ChallengeError(code: "JOURNAL_WRITE_FAILED", message: error.localizedDescription)
+            }
+            if !existing.isEmpty { throw ChallengeError(code: "SESSION_EXISTS", message: "a journal already exists for \(id): clear it or use another id") }
             guard let core = Self.coreDefinition(definition) else {
                 throw ChallengeError(code: "BAD_DEFINITION", message: "the definition breaks its rules")
             }
@@ -107,12 +113,12 @@ final class ChallengeRunner {
     func pause(sessionId id: String) throws -> NativeChallengeSnapshot { try command(id) { $0.pause(atMs: $1) } }
     func resume(sessionId id: String) throws -> NativeChallengeSnapshot { try command(id) { $0.resume(atMs: $1) } }
 
-    func submitCounter(sessionId id: String, sourceId: String, epoch: Int64, meters: Double, ageMs: Int64) {
-        feed(id) { s, at in s.onCounter(sourceId: sourceId, epoch: epoch, counter: meters, atMs: at - max(0, ageMs)) }
+    func submitCounter(sessionId id: String, sourceId: String, epoch: Int64, meters: Double, ageMs: Int64, receivedMonotonicMs: Int64? = nil) {
+        feed(id, receivedMonotonicMs: receivedMonotonicMs) { s, at in s.onCounter(sourceId: sourceId, epoch: epoch, counter: meters, atMs: at - max(0, ageMs)) }
     }
 
-    func submitDelta(sessionId id: String, sourceId: String, eventId: String, delta: Double, ageMs: Int64, stageActivation: Int64? = nil) {
-        feed(id) { s, at in
+    func submitDelta(sessionId id: String, sourceId: String, eventId: String, delta: Double, ageMs: Int64, stageActivation: Int64? = nil, receivedMonotonicMs: Int64? = nil) {
+        feed(id, receivedMonotonicMs: receivedMonotonicMs) { s, at in
             s.onDelta(sourceId: sourceId, eventId: eventId, delta: delta, atMs: at - max(0, ageMs), stageActivation: stageActivation ?? Self.currentActivation)
         }
     }
@@ -200,18 +206,31 @@ final class ChallengeRunner {
                 throw ChallengeError(code: Self.refusalCode(refusal), message: "the challenge refused: \(Self.refusalCode(refusal))")
             }
             persist(result.events)
+            releaseActiveIfCompleted(s)
             return publishedSnapshot()
         }
     }
 
-    /// A sample: dropped when it is not for the open session or when the rules refuse it.
-    private func feed(_ id: String, _ block: @escaping (ChallengeSession, Int64) -> ChallengeResult) {
+    /// The phone's monotonic time NOW: the plugin takes it when a sample ARRIVES, before the sample waits in the queue.
+    func receivedAt() -> Int64 { monotonicMs() }
+
+    /// A sample: dropped when it is not for the open session or when the rules refuse it. Its time is when it ARRIVED (`receivedAt`)
+    /// minus its age, NOT when the queue got to it: a callback that waited behind a stage change still belongs to the interval it was
+    /// measured in.
+    private func feed(_ id: String, receivedMonotonicMs: Int64?, _ block: @escaping (ChallengeSession, Int64) -> ChallengeResult) {
         queue.async { [weak self] in
             guard let self = self, let s = self.session, self.sessionId == id else { return }
-            let result = block(s, self.now())
+            let result = block(s, receivedMonotonicMs.map { $0 + self.shiftMs } ?? self.now())
             self.persist(result.events)
+            self.releaseActiveIfCompleted(s)
             if !result.events.isEmpty { self.publish() }
         }
+    }
+
+    /// A completed challenge is not the one to recover: the active pointer goes, but only once the completion is really on the disk.
+    private func releaseActiveIfCompleted(_ s: ChallengeSession) {
+        guard s.currentState == .completed, !journalFailed else { return }
+        do { try store.setActive(nil) } catch { fail(error) }
     }
 
     private func persist(_ events: [ChallengeEvent]) {

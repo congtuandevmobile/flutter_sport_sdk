@@ -82,6 +82,12 @@ final class WorkoutEngine {
                 throw WorkoutError(code: "SESSION_OPEN", message: "workout \(sessionId ?? "") is still open")
             }
             if id.trimmingCharacters(in: .whitespaces).isEmpty { throw WorkoutError(code: "BAD_SESSION", message: "the session id is empty") }
+            // A session id is used ONCE: lines appended behind another workout's journal would be restored as that workout.
+            let existing: [String]
+            do { existing = try store.read(sessionId: id) } catch {
+                throw WorkoutError(code: "JOURNAL_WRITE_FAILED", message: error.localizedDescription)
+            }
+            if !existing.isEmpty { throw WorkoutError(code: "SESSION_EXISTS", message: "a journal already exists for \(id): clear it or use another id") }
             let created = WorkoutSession.Companion.shared.forMode(mode: Self.coreMode(mode))
             let events = created.start(nowMs: now())
             do {
@@ -113,14 +119,17 @@ final class WorkoutEngine {
         return result
     }
 
-    func submitCounter(sessionId id: String, source: NativeSourceRef, epoch: Int64, meters: Double, ageMs: Int64) {
-        feed(id, ageMs: ageMs) { s, at in
+    /// The phone's monotonic time NOW: the plugin takes it when a sample ARRIVES, before the sample waits in the queue.
+    func receivedAt() -> Int64 { monotonicMs() }
+
+    func submitCounter(sessionId id: String, source: NativeSourceRef, epoch: Int64, meters: Double, ageMs: Int64, receivedMonotonicMs: Int64? = nil) {
+        feed(id, ageMs: ageMs, receivedMonotonicMs: receivedMonotonicMs) { s, at in
             s.onCounter(source: Self.coreSource(source), epoch: epoch, meters: meters, atMs: at)
         }
     }
 
-    func submitSpeed(sessionId id: String, source: NativeSourceRef, epoch: Int64, mps: Double, ageMs: Int64) {
-        feed(id, ageMs: ageMs) { s, at in
+    func submitSpeed(sessionId id: String, source: NativeSourceRef, epoch: Int64, mps: Double, ageMs: Int64, receivedMonotonicMs: Int64? = nil) {
+        feed(id, ageMs: ageMs, receivedMonotonicMs: receivedMonotonicMs) { s, at in
             s.onSpeed(source: Self.coreSource(source), epoch: epoch, mps: mps, atMs: at)
         }
     }
@@ -210,10 +219,12 @@ final class WorkoutEngine {
     }
 
     /// A sample: dropped when it is not for the open session.
-    private func feed(_ id: String, ageMs: Int64, _ block: @escaping (WorkoutSession, Int64) -> [WorkoutEvent]) {
+    private func feed(_ id: String, ageMs: Int64, receivedMonotonicMs: Int64?, _ block: @escaping (WorkoutSession, Int64) -> [WorkoutEvent]) {
         queue.async { [weak self] in
             guard let self = self, let s = self.session, self.sessionId == id else { return }
-            let events = block(s, self.now() - max(0, ageMs))
+            // The time of a sample is when it ARRIVED minus its age, not when the queue got to it.
+            let arrived = receivedMonotonicMs.map { $0 + self.shiftMs } ?? self.now()
+            let events = block(s, arrived - max(0, ageMs))
             self.persist(events)
             if !events.isEmpty { self.publish() }
         }

@@ -74,6 +74,9 @@ class WorkoutEngine(
                 throw WorkoutException("SESSION_OPEN", "workout $sessionId is still open")
             }
             if (id.isBlank()) throw WorkoutException("BAD_SESSION", "the session id is empty")
+            // A session id is used ONCE: lines appended behind another workout's journal would be restored as that workout.
+            val existing = try { store.read(id) } catch (e: IOException) { throw WorkoutException("JOURNAL_WRITE_FAILED", e.message ?: "I/O error") }
+            if (existing.isNotEmpty()) throw WorkoutException("SESSION_EXISTS", "a journal already exists for $id: clear it or use another id")
             val created = WorkoutSession.forMode(WorkoutMode.valueOf(mode.name))
             val events = created.start(now())
             try {
@@ -105,12 +108,15 @@ class WorkoutEngine(
         return result
     }
 
-    fun submitCounter(id: String, source: NativeSourceRef, epoch: Long, meters: Double, ageMs: Long) {
-        if (feed(id, ageMs) { s, at -> s.onCounter(distanceSource(source), epoch, meters, at) }) publish()
+    /** The phone's monotonic time NOW: the plugin takes it when a sample ARRIVES, before the sample waits in the queue. */
+    fun receivedAt(): Long = monotonicMs()
+
+    fun submitCounter(id: String, source: NativeSourceRef, epoch: Long, meters: Double, ageMs: Long, receivedMonotonicMs: Long? = null) {
+        if (feed(id, ageMs, receivedMonotonicMs) { s, at -> s.onCounter(distanceSource(source), epoch, meters, at) }) publish()
     }
 
-    fun submitSpeed(id: String, source: NativeSourceRef, epoch: Long, mps: Double, ageMs: Long) {
-        if (feed(id, ageMs) { s, at -> s.onSpeed(distanceSource(source), epoch, mps, at) }) publish()
+    fun submitSpeed(id: String, source: NativeSourceRef, epoch: Long, mps: Double, ageMs: Long, receivedMonotonicMs: Long? = null) {
+        if (feed(id, ageMs, receivedMonotonicMs) { s, at -> s.onSpeed(distanceSource(source), epoch, mps, at) }) publish()
     }
 
     fun setPreferred(id: String, source: NativeSourceRef?) {
@@ -194,11 +200,13 @@ class WorkoutEngine(
     }
 
     /** A sample: dropped when it is not for the open session. Returns true when something changed. */
-    private fun feed(id: String, ageMs: Long = 0L, block: (WorkoutSession, Long) -> List<WorkoutEvent>): Boolean {
+    private fun feed(id: String, ageMs: Long = 0L, receivedMonotonicMs: Long? = null, block: (WorkoutSession, Long) -> List<WorkoutEvent>): Boolean {
         synchronized(lock) {
             val s = session
             if (s == null || sessionId != id) return false
-            val events = block(s, now() - maxOf(0L, ageMs))
+            // The time of a sample is when it ARRIVED minus its age, not when the queue got to it.
+            val arrived = receivedMonotonicMs?.let { it + shiftMs } ?: now()
+            val events = block(s, arrived - maxOf(0L, ageMs))
             persist(events)
             return events.isNotEmpty()
         }

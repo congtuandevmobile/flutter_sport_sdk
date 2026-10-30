@@ -193,6 +193,34 @@ class WorkoutEngineTest {
     }
 
     @Test
+    fun aSessionIdCannotBeReusedWhileItsJournalExists() = runTest {
+        val e = engine()
+        e.start("w1", NativeWorkoutMode.INDOOR_RUNNING)
+        e.finish("w1")
+        val lines = store.files.getValue("w1").toList()
+        assertEquals("SESSION_EXISTS", assertFailsWith<WorkoutException> { e.start("w1", NativeWorkoutMode.INDOOR_RUNNING) }.code)
+        assertEquals(lines, store.files.getValue("w1"), "nothing was appended behind the first workout's journal")
+        e.clearSession("w1")
+        e.start("w1", NativeWorkoutMode.INDOOR_RUNNING) // after the journal is cleared the id is free again
+    }
+
+    @Test
+    fun aSampleIsTimedWhenItArrivedNotWhenTheQueueGetsToIt() = runTest {
+        val e = engine()
+        e.start("w1", NativeWorkoutMode.INDOOR_RUNNING)
+        e.submitCounter("w1", foot, 1, 0.0, 0)
+        clock += 1000; e.pause("w1")
+        clock += 4000; e.resume("w1") // resumed at 6000
+        // samples that ARRIVED during the pause, processed after the resume
+        e.submitCounter("w1", foot, 1, 100.0, 0, 3_000)
+        e.submitCounter("w1", foot, 1, 110.0, 0, 3_500)
+        assertEquals(0.0, e.snapshot().distanceMeters, 1e-9)
+        clock += 500; e.submitCounter("w1", foot, 1, 120.0, 0)
+        clock += 1000; e.submitCounter("w1", foot, 1, 125.0, 0)
+        assertEquals(5.0, e.snapshot().distanceMeters, 1e-9)
+    }
+
+    @Test
     fun restoringAnotherWorkoutWhileOneIsOpenIsRefusedAndChangesNothing() = runTest {
         val other = engine()
         other.start("w2", NativeWorkoutMode.INDOOR_RUNNING)

@@ -80,13 +80,15 @@ public final class FlutterWorkoutPlugin: NSObject, FlutterPlugin, WorkoutHostApi
 
     /// A sample: queued behind the commands that came before it, never blocking the caller.
     func submitCounter(sessionId: String, source: NativeSourceRef, epoch: Int64, meters: Double, ageMs: Int64) throws {
+        let receivedAt = engine?.receivedAt() // stamped HERE, on arrival: not when the queue gets to it
         calls.async { [weak self] in
-            self?.engine?.submitCounter(sessionId: sessionId, source: source, epoch: epoch, meters: meters, ageMs: ageMs)
+            self?.engine?.submitCounter(sessionId: sessionId, source: source, epoch: epoch, meters: meters, ageMs: ageMs, receivedMonotonicMs: receivedAt)
         }
     }
     func submitSpeed(sessionId: String, source: NativeSourceRef, epoch: Int64, mps: Double, ageMs: Int64) throws {
+        let receivedAt = engine?.receivedAt()
         calls.async { [weak self] in
-            self?.engine?.submitSpeed(sessionId: sessionId, source: source, epoch: epoch, mps: mps, ageMs: ageMs)
+            self?.engine?.submitSpeed(sessionId: sessionId, source: source, epoch: epoch, mps: mps, ageMs: ageMs, receivedMonotonicMs: receivedAt)
         }
     }
 

@@ -337,6 +337,62 @@ class ChallengeRunnerTest {
         assertTrue(store.files["s2"] == null)
     }
 
+    private val singleRun = NativeChallengeDefinition(
+        "race", 1, true, listOf(stage("run", NativeProgressMetric.RUN_METERS, 5.0, NativeCompletionPolicy.AUTO, "gps")),
+    )
+
+    @Test
+    fun aSessionIdCannotBeReusedWhileItsJournalExists() = runTest {
+        val r = runner()
+        r.start("race-001", singleRun)
+        r.submitCounter("race-001", "gps", 1, 100.0, 0)
+        clock += 1000
+        r.submitCounter("race-001", "gps", 1, 105.0, 0) // completed
+        val lines = store.files.getValue("race-001").toList()
+        assertEquals("SESSION_EXISTS", assertFailsWith<ChallengeException> { r.start("race-001", singleRun) }.code)
+        assertEquals(lines, store.files.getValue("race-001"), "nothing was appended behind the first challenge's journal")
+        r.clearSession("race-001")
+        r.start("race-001", singleRun) // after the journal is cleared the id is free again
+    }
+
+    @Test
+    fun aCompletedChallengeReleasesTheActivePointerOnlyOnceItIsOnTheDisk() = runTest {
+        val r = runner()
+        r.start("race-001", singleRun)
+        assertEquals("race-001", r.activeSessionId())
+        r.submitCounter("race-001", "gps", 1, 100.0, 0)
+        clock += 1000
+        r.submitCounter("race-001", "gps", 1, 105.0, 0)
+        assertEquals(NativeChallengeState.COMPLETED, r.snapshot().state)
+        assertNull(r.activeSessionId())
+
+        val r2 = runner()
+        r2.start("race-002", singleRun)
+        r2.submitCounter("race-002", "gps", 1, 100.0, 0)
+        clock += 1000
+        store.failAppends = true // the completion cannot be written: the pointer that finds the challenge to recover must stay
+        r2.submitCounter("race-002", "gps", 1, 105.0, 0)
+        assertEquals("race-002", r2.activeSessionId())
+        assertTrue(r2.snapshot().journalFailed)
+    }
+
+    @Test
+    fun aSampleIsTimedWhenItArrivedNotWhenTheQueueGetsToIt() = runTest {
+        val d = NativeChallengeDefinition("x", 1, true, listOf(stage("run", NativeProgressMetric.RUN_METERS, 1000.0, NativeCompletionPolicy.AUTO, "gps")))
+        val r = runner()
+        r.start("s1", d)
+        clock = 1_000; r.submitCounter("s1", "gps", 1, 100.0, 0)
+        clock = 2_000; r.pause("s1")
+        clock = 5_000; r.resume("s1")
+        // two samples that ARRIVED during the pause (3.0 s, 3.5 s) but are processed after the resume
+        r.submitCounter("s1", "gps", 1, 120.0, 0, 3_000)
+        r.submitCounter("s1", "gps", 1, 125.0, 0, 3_500)
+        assertEquals(0.0, r.snapshot().stageProgress, 1e-9)
+        clock = 5_500; r.submitCounter("s1", "gps", 1, 140.0, 0) // the first sample after the resume: a baseline
+        clock = 6_500; r.submitCounter("s1", "gps", 1, 145.0, 0)
+        assertEquals(5.0, r.snapshot().stageProgress, 1e-9)
+    }
+
     @Test
     fun restoringAnotherChallengeWhileOneIsOpenIsRefusedAndChangesNothing() = runTest {
         val d = NativeChallengeDefinition("x", 1, true, listOf(stage("a", NativeProgressMetric.REPS, 1.0, NativeCompletionPolicy.AUTO, "m")))

@@ -90,11 +90,13 @@ class FlutterChallengePlugin : FlutterPlugin, ChallengeHostApi, ChallengeSink {
 
     /** A sample: queued behind the commands that came before it, never blocking the caller. */
     override fun submitCounter(sessionId: String, sourceId: String, epoch: Long, meters: Double, ageMs: Long) {
-        executor?.execute { runner?.submitCounter(sessionId, sourceId, epoch, meters, ageMs) }
+        val receivedAt = runner?.receivedAt() // stamped HERE, on arrival: not when the queue gets to it
+        executor?.execute { runner?.submitCounter(sessionId, sourceId, epoch, meters, ageMs, receivedAt) }
     }
 
     override fun submitDelta(sessionId: String, sourceId: String, eventId: String, delta: Double, ageMs: Long, stageActivation: Long?) {
-        executor?.execute { runner?.submitDelta(sessionId, sourceId, eventId, delta, ageMs, stageActivation) }
+        val receivedAt = runner?.receivedAt()
+        executor?.execute { runner?.submitDelta(sessionId, sourceId, eventId, delta, ageMs, stageActivation, receivedAt) }
     }
 
     override fun onSnapshot(snapshot: NativeChallengeSnapshot) {
