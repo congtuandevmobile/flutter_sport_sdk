@@ -195,14 +195,18 @@ class FlutterError (
   val details: Any? = null
 ) : RuntimeException()
 
-/** Order matches `challenge.model.ProgressMetric` of the shared core (a test of each engine fails if it drifts). */
+/**
+ * Order matches `challenge.model.ProgressMetric` of the shared core (a test of each engine fails if it drifts).
+ * APPEND ONLY. `duration`: the stage's goal is TIME (target in seconds, the engine completes it by its own clock; no sources).
+ */
 enum class NativeProgressMetric(val raw: Int) {
   RUN_METERS(0),
   ROW_METERS(1),
   SKI_METERS(2),
   SLED_METERS(3),
   SWIM_METERS(4),
-  REPS(5);
+  REPS(5),
+  DURATION(6);
 
   companion object {
     fun ofRaw(raw: Int): NativeProgressMetric? {
@@ -254,11 +258,15 @@ enum class NativeStageStatus(val raw: Int) {
   }
 }
 
-/** Order matches `challenge.model.CompletionEvidence`. */
+/**
+ * Order matches `challenge.model.CompletionEvidence`.
+ * APPEND ONLY. `timer`: the stage clock reached a duration target.
+ */
 enum class NativeCompletionEvidence(val raw: Int) {
   SENSOR(0),
   MANUAL(1),
-  JUDGE(2);
+  JUDGE(2),
+  TIMER(3);
 
   companion object {
     fun ofRaw(raw: Int): NativeCompletionEvidence? {

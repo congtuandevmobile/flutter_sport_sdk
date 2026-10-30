@@ -57,7 +57,7 @@ class ChallengeRunner(
             ticker = scope.launch {
                 while (true) {
                     delay(snapshotEveryMs)
-                    publish()
+                    tickAndPublish()
                 }
             }
         }
@@ -76,10 +76,14 @@ class ChallengeRunner(
             if (open != null && open.currentState != ChallengeState.COMPLETED) {
                 throw ChallengeException("SESSION_OPEN", "challenge $sessionId is still open")
             }
+            // The previous challenge finished in memory but its journal is NOT (fully) on the disk: the active pointer is the only way
+            // to recover it, and a new challenge would replace it. Recover it, or discard it on purpose with clearSession.
+            if (open != null && journalFailed) {
+                throw ChallengeException("RECOVERY_REQUIRED", "the previous challenge $sessionId has a journal failure: recover it or clear it first")
+            }
             if (id.isBlank()) throw ChallengeException("BAD_SESSION", "the session id is empty")
             // A session id is used ONCE: lines appended behind another challenge's journal would be restored as that challenge.
-            val existing = try { store.read(id) } catch (e: IOException) { throw ChallengeException("JOURNAL_WRITE_FAILED", e.message ?: "I/O error") }
-            if (existing.isNotEmpty()) throw ChallengeException("SESSION_EXISTS", "a journal already exists for $id: clear it or use another id")
+            if (store.exists(id)) throw ChallengeException("SESSION_EXISTS", "a journal already exists for $id: clear it or use another id")
             val core = try { toCore(definition) } catch (e: IllegalArgumentException) {
                 throw ChallengeException("BAD_DEFINITION", e.message ?: "the definition breaks its rules")
             }
@@ -89,7 +93,9 @@ class ChallengeRunner(
                 store.append(id, result.events.map { ChallengeJournal.encode(it) })
                 store.setActive(id)
             } catch (e: IOException) {
-                // A challenge that cannot even write its first line is not started: nothing would survive the process dying.
+                // A challenge that cannot even write its first line is not started: nothing would survive the process dying. What
+                // the attempt left behind (an empty file) must not make the id look taken on the next try.
+                try { store.clear(id) } catch (_: IOException) {}
                 throw ChallengeException("JOURNAL_WRITE_FAILED", e.message ?: "I/O error")
             }
             session = created
@@ -178,6 +184,8 @@ class ChallengeRunner(
             if (sessionId == id) {
                 session = null
                 sessionId = null
+                journalFailed = false
+                error = null
             }
         }
         publish()
@@ -249,6 +257,18 @@ class ChallengeRunner(
     }
 
     private fun publish() = sink.onSnapshot(snapshot())
+
+    /** Once a second: the clock of a DURATION stage (it may complete, or leave a checkpoint), journaled BEFORE the snapshot. */
+    private fun tickAndPublish() {
+        synchronized(lock) {
+            val s = session
+            if (s != null && sessionId != null) {
+                persist(s.tick(now()).events)
+                releaseActiveIfCompleted(s)
+            }
+        }
+        publish()
+    }
 
     private fun makeSnapshot(): NativeChallengeSnapshot {
         val s = session

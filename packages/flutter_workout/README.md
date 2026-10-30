@@ -45,3 +45,10 @@ The package measures nothing: it takes samples and decides what they add up to.
   `WorkoutFeeder`), not a published package.
 
 Layout and rules of the repository: see the root `CLAUDE.md`.
+
+## Session lifecycle contract
+
+- **A session id is used once.** `start` with an id whose journal exists (even an empty file) fails with `SESSION_EXISTS`; call `clearSession` first.
+- **One session at a time.** `start` or `restore` of another session while one is open fails with `SESSION_OPEN`.
+- **A failed journal is never silently replaced.** If the previous workout finished in memory but its journal could not be written, `start` fails with `RECOVERY_REQUIRED`: recover it (`activeSessionId` still points to it) or discard it on purpose with `clearSession`.
+- **One Flutter engine owns the journal.** A second engine alive at the same time gets `OWNED_BY_ANOTHER_ENGINE` on every command (nothing is written). Hot reload is fine; a second engine (for example a headless background isolate) is not supported.

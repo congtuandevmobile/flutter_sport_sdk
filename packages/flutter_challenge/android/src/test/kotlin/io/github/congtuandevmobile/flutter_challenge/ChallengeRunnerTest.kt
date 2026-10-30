@@ -24,6 +24,7 @@ private class MemoryStore : ChallengeJournalStore {
         if (failAppends) throw IOException("disk full")
         files.getOrPut(sessionId) { ArrayList() }.addAll(lines)
     }
+    override fun exists(sessionId: String) = files.containsKey(sessionId)
     override fun read(sessionId: String) = files[sessionId]?.toList() ?: emptyList()
     override fun clear(sessionId: String) { files.remove(sessionId); if (activeId == sessionId) activeId = null }
     override fun replaceKeepingOriginal(sessionId: String, lines: List<String>): String {
@@ -342,6 +343,56 @@ class ChallengeRunnerTest {
     )
 
     @Test
+    fun aNewChallengeCannotReplaceTheRecoveryPointerOfOneWhoseCompletionWasNotWritten() = runTest {
+        val r = runner()
+        r.start("A", singleRun)
+        r.submitCounter("A", "gps", 1, 100.0, 0)
+        clock += 1000
+        store.failAppends = true
+        r.submitCounter("A", "gps", 1, 105.0, 0) // A completes in memory, the completion is not on the disk
+        store.failAppends = false
+        assertEquals(NativeChallengeState.COMPLETED, r.snapshot().state)
+        assertTrue(r.snapshot().journalFailed)
+        assertEquals("RECOVERY_REQUIRED", assertFailsWith<ChallengeException> { r.start("B", singleRun) }.code)
+        assertEquals("A", r.activeSessionId())
+        assertNull(store.files["B"], "nothing of B was written")
+        // discarding A on purpose frees the runner
+        r.clearSession("A")
+        val b = r.start("B", singleRun)
+        assertEquals("B", b.sessionId)
+        assertTrue(!b.journalFailed)
+    }
+
+    @Test
+    fun anEmptyJournalFileStillTakesTheId() = runTest {
+        store.files["taken"] = ArrayList() // the file exists but holds no line
+        val r = runner()
+        assertEquals("SESSION_EXISTS", assertFailsWith<ChallengeException> { r.start("taken", singleRun) }.code)
+    }
+
+    @Test
+    fun aStartThatCannotWriteItsFirstLineLeavesTheIdFree() = runTest {
+        val r = runner()
+        store.failAppends = true
+        assertEquals("JOURNAL_WRITE_FAILED", assertFailsWith<ChallengeException> { r.start("retry", singleRun) }.code)
+        store.failAppends = false
+        r.start("retry", singleRun) // not SESSION_EXISTS
+    }
+
+    @Test
+    fun onlyOneEngineOwnsTheJournalDirectory() {
+        val dir = java.nio.file.Files.createTempDirectory("owner").toFile()
+        val first = JournalDirectoryOwner(dir)
+        val second = JournalDirectoryOwner(dir)
+        assertTrue(first.tryAcquire())
+        assertTrue(first.tryAcquire(), "asking again is fine")
+        assertTrue(!second.tryAcquire(), "a second engine must not get it")
+        first.release()
+        assertTrue(second.tryAcquire(), "after the first engine detached")
+        second.release()
+    }
+
+    @Test
     fun aSessionIdCannotBeReusedWhileItsJournalExists() = runTest {
         val r = runner()
         r.start("race-001", singleRun)
@@ -427,6 +478,43 @@ class ChallengeRunnerTest {
         assertEquals(NativeChallengeState.ACTIVE, r.snapshot().state)
         r.submitDelta("s1", "tap", "t3", 1.0, 0, r.snapshot().stageActivation)
         assertEquals(1.0, r.snapshot().stageProgress, 1e-9)
+    }
+
+    private val football = NativeChallengeDefinition(
+        "x", 1, true,
+        listOf(
+            stage("football", NativeProgressMetric.DURATION, 10.0, NativeCompletionPolicy.AUTO), // no sources: the clock completes it
+            stage("run", NativeProgressMetric.RUN_METERS, 100.0, NativeCompletionPolicy.AUTO, "gps"),
+        ),
+    )
+
+    @Test
+    fun aTimedStageCompletesByTheRunnersOwnTickAndIsOnTheDiskBeforeItIsShown() = runTest {
+        val r = runner()
+        r.start()
+        r.start("s1", football)
+        clock += 10_500
+        advanceTimeBy(1_100) // one tick of the runner
+        val snap = r.snapshot()
+        assertEquals(NativeChallengeState.TRANSITION, snap.state)
+        assertEquals(NativeCompletionEvidence.TIMER, snap.completed.single().evidence)
+        assertEquals(10_000L, snap.completed.single().durationMs, "completed AT the 10 s, not when the tick came")
+        assertEquals(store.files.getValue("s1").size, sink.linesAtPublish.last(), "the completion was on the disk before it was shown")
+        r.stop()
+    }
+
+    @Test
+    fun aTimedStageLeavesCheckpointsSoACrashLosesAtMostTenSeconds() = runTest {
+        val long = NativeChallengeDefinition("x", 1, true, listOf(stage("football", NativeProgressMetric.DURATION, 3600.0, NativeCompletionPolicy.AUTO)))
+        val r = runner()
+        r.start()
+        r.start("s1", long)
+        repeat(35) { clock += 1000; advanceTimeBy(1_000) } // 35 s of football
+        r.stop()
+        assertTrue(store.files.getValue("s1").any { it.contains("|K|") }, "checkpoints are in the journal")
+        val restored = runner().restore("s1") // the process "died"
+        assertEquals(NativeChallengeState.PAUSED, restored.state)
+        assertTrue(restored.stageProgress in 25.0..35.0, "about 35 s, at most 10 s lost: ${restored.stageProgress}")
     }
 
     @Test

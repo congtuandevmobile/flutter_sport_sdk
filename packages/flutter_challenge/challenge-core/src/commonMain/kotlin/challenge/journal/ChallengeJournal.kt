@@ -55,6 +55,7 @@ object ChallengeJournal {
             is ChallengeEvent.Paused -> b.append("U|").append(e.atMs).append('|').append(esc(e.reason))
             is ChallengeEvent.Resumed -> b.append("R|").append(e.atMs)
             is ChallengeEvent.Completed -> b.append("F|").append(e.atMs)
+            is ChallengeEvent.Checkpoint -> b.append("K|").append(e.atMs)
         }
         val text = b.toString()
         return text + "|" + Crc32.hex(text)
@@ -86,6 +87,7 @@ object ChallengeJournal {
                 "U" -> if (p.size == 5) ChallengeEvent.Paused(seq, at, unesc(p[4])) else null
                 "R" -> if (p.size == 4) ChallengeEvent.Resumed(seq, at) else null
                 "F" -> if (p.size == 4) ChallengeEvent.Completed(seq, at) else null
+                "K" -> if (p.size == 4) ChallengeEvent.Checkpoint(seq, at) else null
                 else -> null
             }
         } catch (e: IllegalArgumentException) { // a bad number, an unknown enum, a definition that breaks its own rules
@@ -128,7 +130,7 @@ object ChallengeJournal {
             stages.add(
                 StageDefinition(
                     unesc(p[o]), ProgressMetric.valueOf(p[o + 1]), p[o + 2].toDouble(), CompletionPolicy.valueOf(p[o + 3]),
-                    p[o + 4].split(',').map { unesc(it) }.toSet(),
+                    if (p[o + 4].isEmpty()) emptySet() else p[o + 4].split(',').map { unesc(it) }.toSet(), // a DURATION stage has no sources
                 ),
             )
         }

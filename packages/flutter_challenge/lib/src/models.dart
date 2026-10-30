@@ -1,7 +1,11 @@
 import 'package:meta/meta.dart';
 
 /// What a stage measures. A domain metric, never a generic "distance": a rower's metres cannot complete a run stage.
-enum ProgressMetric { runMeters, rowMeters, skiMeters, sledMeters, swimMeters, reps }
+/// What a stage measures. APPEND ONLY (the order is the order of the native enum).
+///
+/// [duration] is not a measurement: the goal of the stage is TIME. Its `target` is in seconds, the engine completes the stage by its
+/// own clock (a pause is not counted), and no source feeds it, so `allowedSources` may be empty.
+enum ProgressMetric { runMeters, rowMeters, skiMeters, sledMeters, swimMeters, reps, duration }
 
 /// How a stage is completed.
 enum CompletionPolicy {
@@ -22,7 +26,14 @@ enum ChallengeState { idle, active, transition, paused, completed }
 
 enum StageStatus { pending, active, targetReached, completed }
 
-enum CompletionEvidence { sensor, manual, judge }
+enum CompletionEvidence {
+  sensor,
+  manual,
+  judge,
+
+  /// The stage clock reached a [ProgressMetric.duration] target.
+  timer,
+}
 
 /// What a restore found in the journal.
 enum RestoreStatus { notRestored, intact, tailRepaired, partial }

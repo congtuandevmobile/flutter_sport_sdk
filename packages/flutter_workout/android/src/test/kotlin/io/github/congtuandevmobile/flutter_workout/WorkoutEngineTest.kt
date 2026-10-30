@@ -25,6 +25,7 @@ private class MemoryStore : WorkoutJournalStore {
         files.getOrPut(sessionId) { ArrayList() }.addAll(lines)
         log += "append:${lines.size}"
     }
+    override fun exists(sessionId: String) = files.containsKey(sessionId)
     override fun read(sessionId: String) = files[sessionId]?.toList() ?: emptyList()
     override fun clear(sessionId: String) { files.remove(sessionId); if (activeId == sessionId) activeId = null }
     var failReplace = false
@@ -190,6 +191,69 @@ class WorkoutEngineTest {
         clock += 3000
         e2.submitCounter("w1", foot, 1, 1010.0, 0)
         assertEquals(distance + 10.0, e2.snapshot().distanceMeters, 1e-9)
+    }
+
+    @Test
+    fun aFinishThatCannotBeWrittenKeepsTheActivePointerForRecovery() = runTest {
+        val e = engine()
+        e.start("w1", NativeWorkoutMode.INDOOR_RUNNING)
+        store.failAppends = true
+        e.finish("w1")
+        assertTrue(e.snapshot().journalFailed)
+        assertEquals("w1", e.activeSessionId(), "the journal still says the workout is open: the pointer must still lead to it")
+    }
+
+    @Test
+    fun aNewWorkoutCannotReplaceTheRecoveryPointerOfOneWhoseFinishWasNotWritten() = runTest {
+        val e = engine()
+        e.start("w1", NativeWorkoutMode.INDOOR_RUNNING)
+        store.failAppends = true
+        e.finish("w1")
+        store.failAppends = false
+        assertEquals("RECOVERY_REQUIRED", assertFailsWith<WorkoutException> { e.start("w2", NativeWorkoutMode.INDOOR_RUNNING) }.code)
+        assertEquals("w1", e.activeSessionId())
+        assertNull(store.files["w2"], "nothing of w2 was written")
+        e.clearSession("w1") // discarding w1 on purpose frees the engine
+        val w2 = e.start("w2", NativeWorkoutMode.INDOOR_RUNNING)
+        assertEquals("w2", w2.sessionId)
+        assertTrue(!w2.journalFailed)
+    }
+
+    @Test
+    fun aFinishThatWasWrittenReleasesThePointerAndTheSnapshotShowsIt() = runTest {
+        val e = engine()
+        e.start("w1", NativeWorkoutMode.INDOOR_RUNNING)
+        val snap = e.finish("w1")
+        assertEquals(NativeWorkoutState.FINISHED, snap.state)
+        assertNull(e.activeSessionId())
+    }
+
+    @Test
+    fun anEmptyJournalFileStillTakesTheId() = runTest {
+        store.files["taken"] = ArrayList() // the file exists but holds no line
+        assertEquals("SESSION_EXISTS", assertFailsWith<WorkoutException> { engine().start("taken", NativeWorkoutMode.INDOOR_RUNNING) }.code)
+    }
+
+    @Test
+    fun aStartThatCannotWriteItsFirstLineLeavesTheIdFree() = runTest {
+        val e = engine()
+        store.failAppends = true
+        assertEquals("JOURNAL_WRITE_FAILED", assertFailsWith<WorkoutException> { e.start("retry", NativeWorkoutMode.INDOOR_RUNNING) }.code)
+        store.failAppends = false
+        e.start("retry", NativeWorkoutMode.INDOOR_RUNNING) // not SESSION_EXISTS
+    }
+
+    @Test
+    fun onlyOneEngineOwnsTheJournalDirectory() {
+        val dir = java.nio.file.Files.createTempDirectory("owner").toFile()
+        val first = JournalDirectoryOwner(dir)
+        val second = JournalDirectoryOwner(dir)
+        assertTrue(first.tryAcquire())
+        assertTrue(first.tryAcquire(), "asking again is fine")
+        assertTrue(!second.tryAcquire(), "a second engine must not get it")
+        first.release()
+        assertTrue(second.tryAcquire(), "after the first engine detached")
+        second.release()
     }
 
     @Test

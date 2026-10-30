@@ -26,6 +26,10 @@ class FlutterWorkoutPlugin : FlutterPlugin, WorkoutHostApi, WorkoutSink {
     private var scope: CoroutineScope? = null
     private var flutterApi: WorkoutFlutterApi? = null
     private val main = Handler(Looper.getMainLooper())
+    private var owner: JournalDirectoryOwner? = null
+
+    /** True when another Flutter engine of the app already owns the journal directory: every command then fails, nothing is written. */
+    private var notOwner = false
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         val thread = Executors.newSingleThreadExecutor { Thread(it, "flutter_workout") }
@@ -33,10 +37,15 @@ class FlutterWorkoutPlugin : FlutterPlugin, WorkoutHostApi, WorkoutSink {
         val newScope = CoroutineScope(SupervisorJob() + thread.asCoroutineDispatcher())
         scope = newScope
         flutterApi = WorkoutFlutterApi(binding.binaryMessenger)
-        val store = FileWorkoutJournalStore(File(binding.applicationContext.filesDir, "flutter_workout"))
-        val newEngine = WorkoutEngine(store, newScope, { SystemClock.elapsedRealtime() }, this)
-        engine = newEngine
-        newEngine.start()
+        val dir = File(binding.applicationContext.filesDir, "flutter_workout")
+        val newOwner = JournalDirectoryOwner(dir)
+        notOwner = !newOwner.tryAcquire()
+        if (!notOwner) {
+            owner = newOwner
+            val newEngine = WorkoutEngine(FileWorkoutJournalStore(dir), newScope, { SystemClock.elapsedRealtime() }, this)
+            engine = newEngine
+            newEngine.start()
+        }
         WorkoutHostApi.setUp(binding.binaryMessenger, this)
     }
 
@@ -44,6 +53,9 @@ class FlutterWorkoutPlugin : FlutterPlugin, WorkoutHostApi, WorkoutSink {
         WorkoutHostApi.setUp(binding.binaryMessenger, null)
         engine?.stop()
         engine = null
+        owner?.release()
+        owner = null
+        notOwner = false
         scope?.cancel()
         scope = null
         executor?.shutdown()
@@ -60,7 +72,8 @@ class FlutterWorkoutPlugin : FlutterPlugin, WorkoutHostApi, WorkoutSink {
         }
         thread.execute {
             val result: Result<T> = try {
-                val e = engine ?: throw WorkoutException("DETACHED", "the plugin is detached")
+                val e = engine ?: throw (if (notOwner) WorkoutException("OWNED_BY_ANOTHER_ENGINE", "this plugin does not own the journal directory: another Flutter engine of the app already does (one engine at a time)")
+                    else WorkoutException("DETACHED", "the plugin is detached"))
                 Result.success(block(e))
             } catch (ex: WorkoutException) {
                 Result.failure(FlutterError(ex.code, ex.message, null))

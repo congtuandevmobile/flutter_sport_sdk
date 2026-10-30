@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Where the workout journal lives. `append` returns only when the lines are on the disk (the engine shows a number only after
@@ -5,6 +6,8 @@ import Foundation
 protocol WorkoutJournalStore: AnyObject {
     func append(sessionId: String, lines: [String]) throws
     func read(sessionId: String) throws -> [String]
+    /// Whether a journal file for `sessionId` exists, EVEN an empty one: an id is used once, so an empty file still means "taken".
+    func exists(sessionId: String) -> Bool
     func clear(sessionId: String) throws
     /// Replaces the journal by `lines` ATOMICALLY (a temporary file is written and synced, then moved over it) after keeping the
     /// previous content next to it for diagnosis. Used to cut a damaged tail off, so that what is appended later is never hidden
@@ -38,6 +41,8 @@ final class FileWorkoutJournalStore: WorkoutJournalStore {
         try handle.write(contentsOf: Data((lines.joined(separator: "\n") + "\n").utf8))
         try handle.synchronize()
     }
+
+    func exists(sessionId: String) -> Bool { manager.fileExists(atPath: file(sessionId).path) }
 
     func read(sessionId: String) throws -> [String] {
         let url = file(sessionId)
@@ -97,4 +102,39 @@ final class FileWorkoutJournalStore: WorkoutJournalStore {
         }
         return out
     }
+}
+
+/// Exactly ONE Flutter engine may own the journal directory: two runners that do not know each other would write the same files.
+/// The owner holds an exclusive `flock` on `.owner.lock` in `dir` while its plugin is attached (the OS drops it when the process
+/// dies). A second engine (in this process or another) does not get it: its commands fail with `OWNED_BY_ANOTHER_ENGINE` instead of
+/// racing the first one.
+final class WorkoutDirectoryOwner {
+    private let dir: URL
+    private var fd: Int32 = -1
+
+    init(dir: URL) { self.dir = dir }
+
+    /// True when this owner now holds the directory (or already did).
+    func tryAcquire() -> Bool {
+        if fd >= 0 { return true }
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let opened = open(dir.appendingPathComponent(".owner.lock").path, O_CREAT | O_RDWR, 0o600)
+        if opened < 0 { return false }
+        if flock(opened, LOCK_EX | LOCK_NB) != 0 {
+            close(opened)
+            return false
+        }
+        fd = opened
+        return true
+    }
+
+    func release() {
+        if fd >= 0 {
+            flock(fd, LOCK_UN)
+            close(fd)
+            fd = -1
+        }
+    }
+
+    deinit { release() }
 }

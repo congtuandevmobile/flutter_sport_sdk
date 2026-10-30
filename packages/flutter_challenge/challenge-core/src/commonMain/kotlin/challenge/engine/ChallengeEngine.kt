@@ -8,6 +8,7 @@ import challenge.model.ChallengeState
 import challenge.model.CompletedStage
 import challenge.model.CompletionEvidence
 import challenge.model.CompletionPolicy
+import challenge.model.ProgressMetric
 import challenge.model.ProgressSample
 import challenge.model.Refusal
 import challenge.model.StageStatus
@@ -102,6 +103,8 @@ class ChallengeEngine(val definition: ChallengeDefinition, val sessionId: String
     fun confirm(evidence: CompletionEvidence, atMs: Long): ChallengeResult {
         if (state != ChallengeState.ACTIVE || stageStatus == StageStatus.COMPLETED) return ChallengeResult.refused(Refusal.WRONG_STATE)
         if (atMs < maxOf(stageStartedAt, lastAcceptedAt)) return ChallengeResult.refused(Refusal.TIME_BACKWARDS)
+        val due = settle(atMs) // a time that already ran out is settled before the confirmation is judged
+        if (due.any { it is ChallengeEvent.StageCompleted }) return ChallengeResult(due)
         val allowed = when (definition.stages[index].policy) {
             CompletionPolicy.AUTO -> false
             CompletionPolicy.MANUAL, CompletionPolicy.SENSOR_OR_MANUAL ->
@@ -119,6 +122,38 @@ class ChallengeEngine(val definition: ChallengeDefinition, val sessionId: String
         return ChallengeResult(listOf(apply(ChallengeEvent.StageActivated(++seq, atMs, index + 1, activation + 1))))
     }
 
+    /**
+     * The clock of a DURATION stage. Call it regularly (the runners do, once a second): when the ACTIVE time of the stage has reached its
+     * target, the stage reaches its target AT THE MOMENT the time was reached (not when the tick came), and an AUTO stage completes with
+     * TIMER evidence. The completion is an event like any other: it is journaled before it is shown, and a replay gives the same
+     * result. Nothing happens in another state: a paused challenge does not run out of time, and neither does one that is not running.
+     */
+    fun tick(atMs: Long): ChallengeResult {
+        val due = settle(atMs)
+        if (due.isNotEmpty()) return ChallengeResult(due)
+        // a DURATION stage that is running leaves a checkpoint now and then: a crash then loses at most the time since the last one
+        if (state == ChallengeState.ACTIVE && stageStatus == StageStatus.ACTIVE &&
+            definition.stages[index].metric == ProgressMetric.DURATION && atMs - lastEventAt >= CHECKPOINT_EVERY_MS
+        ) {
+            return ChallengeResult(listOf(apply(ChallengeEvent.Checkpoint(++seq, atMs))))
+        }
+        return ChallengeResult.NONE
+    }
+
+    /** The events of a DURATION stage whose time is up at [atMs] (empty when it is not up). */
+    private fun settle(atMs: Long): List<ChallengeEvent> {
+        if (state != ChallengeState.ACTIVE || stageStatus != StageStatus.ACTIVE) return emptyList()
+        val stage = definition.stages[index]
+        if (stage.metric != ProgressMetric.DURATION) return emptyList()
+        val dueAt = stageStartedAt + stagePausedTotal + (stage.target * 1000.0).toLong()
+        if (atMs < dueAt) return emptyList()
+        val at = maxOf(dueAt, lastEventAt) // an event never goes back in time
+        val events = ArrayList<ChallengeEvent>(3)
+        events += apply(ChallengeEvent.TargetReached(++seq, at, activation))
+        if (stage.policy == CompletionPolicy.AUTO) events += complete(at, CompletionEvidence.TIMER)
+        return events
+    }
+
     /** A pause by the user (refused when the definition forbids it). */
     fun pause(atMs: Long): ChallengeResult = pause(atMs, "user")
 
@@ -126,7 +161,10 @@ class ChallengeEngine(val definition: ChallengeDefinition, val sessionId: String
         if (state != ChallengeState.ACTIVE && state != ChallengeState.TRANSITION) return ChallengeResult.refused(Refusal.WRONG_STATE)
         if (reason == "user" && !definition.allowPause) return ChallengeResult.refused(Refusal.PAUSE_NOT_ALLOWED)
         if (atMs < lastEventAt) return ChallengeResult.refused(Refusal.TIME_BACKWARDS)
-        return ChallengeResult(listOf(apply(ChallengeEvent.Paused(++seq, atMs, reason))))
+        // a time that ran out before the pause is settled first: the pause must not stretch the stage
+        val due = settle(atMs)
+        if (state == ChallengeState.COMPLETED) return ChallengeResult(due) // the time that ran out was the last stage: nothing left to pause
+        return ChallengeResult(due + apply(ChallengeEvent.Paused(++seq, atMs, reason)))
     }
 
     fun resume(atMs: Long): ChallengeResult {
@@ -148,8 +186,12 @@ class ChallengeEngine(val definition: ChallengeDefinition, val sessionId: String
             else -> 0L
         }
         val current = definition.stages.getOrNull(index)
+        // A DURATION stage shows its clock as its progress (seconds, capped at the target); it is display only: the stage completes by tick().
+        val shownProgress = if (current?.metric == ProgressMetric.DURATION && stageStatus != StageStatus.COMPLETED && stageStatus != StageStatus.PENDING) {
+            minOf(current.target, stageTime / 1000.0)
+        } else progress
         return ChallengeSnapshot(
-            state, definition.id, definition.version, index, current?.id, activation, stageStatus, progress, current?.target ?: 0.0,
+            state, definition.id, definition.version, index, current?.id, activation, stageStatus, shownProgress, current?.target ?: 0.0,
             total, stageTime, results.toList(), seq, recoveries,
         )
     }
@@ -189,10 +231,14 @@ class ChallengeEngine(val definition: ChallengeDefinition, val sessionId: String
             }
             is ChallengeEvent.TargetReached -> if (e.activation == activation && stageStatus == StageStatus.ACTIVE) {
                 stageStatus = StageStatus.TARGET_REACHED
+                definition.stages[index].let { if (it.metric == ProgressMetric.DURATION) progress = it.target }
             }
             is ChallengeEvent.StageCompleted -> if (e.activation == activation && stageStatus != StageStatus.COMPLETED) {
                 stageStatus = StageStatus.COMPLETED
-                results.add(CompletedStage(definition.stages[index].id, maxOf(0L, e.atMs - stageStartedAt - stagePausedTotal), progress, e.evidence))
+                val durationMs = maxOf(0L, e.atMs - stageStartedAt - stagePausedTotal)
+                // the progress of a DURATION stage is the time it ran (seconds, at most the target), also when it is confirmed early
+                definition.stages[index].let { if (it.metric == ProgressMetric.DURATION) progress = minOf(it.target, durationMs / 1000.0) }
+                results.add(CompletedStage(definition.stages[index].id, durationMs, progress, e.evidence))
                 state = ChallengeState.TRANSITION
             }
             is ChallengeEvent.Paused -> {
@@ -208,6 +254,7 @@ class ChallengeEngine(val definition: ChallengeDefinition, val sessionId: String
                 pausedAt = -1L
                 state = resumeState
             }
+            is ChallengeEvent.Checkpoint -> Unit // it only moves lastEventAt (above): the stage clock is derived from event times
             is ChallengeEvent.Completed -> {
                 state = ChallengeState.COMPLETED
                 finishedAt = e.atMs
@@ -217,6 +264,9 @@ class ChallengeEngine(val definition: ChallengeDefinition, val sessionId: String
     }
 
     companion object {
+        /** How often a running DURATION stage leaves a checkpoint (an unmeasured starting value). */
+        const val CHECKPOINT_EVERY_MS = 10_000L
+
         /**
          * Rebuilds a challenge from its journal events, in any order and with duplicates (an event whose sequence number was already
          * applied is ignored). The definition comes from the Created event. A challenge that was ACTIVE or in a TRANSITION when the

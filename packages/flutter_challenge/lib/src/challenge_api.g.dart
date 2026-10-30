@@ -108,6 +108,7 @@ int _deepHash(Object? value) {
 
 
 /// Order matches `challenge.model.ProgressMetric` of the shared core (a test of each engine fails if it drifts).
+/// APPEND ONLY. `duration`: the stage's goal is TIME (target in seconds, the engine completes it by its own clock; no sources).
 enum NativeProgressMetric {
   runMeters,
   rowMeters,
@@ -115,6 +116,7 @@ enum NativeProgressMetric {
   sledMeters,
   swimMeters,
   reps,
+  duration,
 }
 
 /// Order matches `challenge.model.CompletionPolicy`.
@@ -143,10 +145,12 @@ enum NativeStageStatus {
 }
 
 /// Order matches `challenge.model.CompletionEvidence`.
+/// APPEND ONLY. `timer`: the stage clock reached a duration target.
 enum NativeCompletionEvidence {
   sensor,
   manual,
   judge,
+  timer,
 }
 
 /// What a restore found in the journal.

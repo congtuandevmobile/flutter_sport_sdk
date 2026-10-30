@@ -179,6 +179,7 @@ func deepHashChallengeApi(value: Any?, hasher: inout Hasher) {
 
 
 /// Order matches `challenge.model.ProgressMetric` of the shared core (a test of each engine fails if it drifts).
+/// APPEND ONLY. `duration`: the stage's goal is TIME (target in seconds, the engine completes it by its own clock; no sources).
 enum NativeProgressMetric: Int {
   case runMeters = 0
   case rowMeters = 1
@@ -186,6 +187,7 @@ enum NativeProgressMetric: Int {
   case sledMeters = 3
   case swimMeters = 4
   case reps = 5
+  case duration = 6
 }
 
 /// Order matches `challenge.model.CompletionPolicy`.
@@ -214,10 +216,12 @@ enum NativeStageStatus: Int {
 }
 
 /// Order matches `challenge.model.CompletionEvidence`.
+/// APPEND ONLY. `timer`: the stage clock reached a duration target.
 enum NativeCompletionEvidence: Int {
   case sensor = 0
   case manual = 1
   case judge = 2
+  case timer = 3
 }
 
 /// What a restore found in the journal.

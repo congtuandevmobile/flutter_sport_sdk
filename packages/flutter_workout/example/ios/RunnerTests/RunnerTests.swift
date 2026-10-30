@@ -12,6 +12,7 @@ private final class MemoryStore: WorkoutJournalStore {
         if failAppends { throw NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "disk full"]) }
         files[sessionId, default: []].append(contentsOf: lines)
     }
+    func exists(sessionId: String) -> Bool { files[sessionId] != nil }
     func read(sessionId: String) throws -> [String] { files[sessionId] ?? [] }
     func clear(sessionId: String) throws { files[sessionId] = nil; if activeId == sessionId { activeId = nil } }
     var failReplace = false
@@ -305,5 +306,107 @@ final class RunnerTests: XCTestCase {
         try s.clear(sessionId: "a/b c")
         XCTAssertEqual(try s.read(sessionId: "a/b c"), [])
         XCTAssertNil(s.activeSessionId())
+    }
+
+    // MARK: - Session lifecycle contract (mirrors the Android tests)
+
+    private func errorCode(_ block: () throws -> Void) -> String? {
+        do { try block() } catch { return (error as? WorkoutError)?.code }
+        return nil
+    }
+
+    func testAFinishThatCannotBeWrittenKeepsTheActivePointerForRecovery() throws {
+        let e = makeEngine()
+        _ = try e.start(sessionId: "w1", mode: .indoorRunning)
+        store.failAppends = true
+        _ = try e.finish(sessionId: "w1")
+        XCTAssertTrue(e.snapshot().journalFailed)
+        XCTAssertEqual(e.activeSessionId(), "w1", "the journal still says the workout is open: the pointer must still lead to it")
+    }
+
+    func testAFinishThatWasWrittenReleasesThePointerAndTheSnapshotShowsIt() throws {
+        let e = makeEngine()
+        _ = try e.start(sessionId: "w1", mode: .indoorRunning)
+        let snap = try e.finish(sessionId: "w1")
+        XCTAssertEqual(snap.state, .finished)
+        XCTAssertNil(e.activeSessionId())
+    }
+
+    func testANewWorkoutCannotReplaceTheRecoveryPointerOfOneWhoseFinishWasNotWritten() throws {
+        let e = makeEngine()
+        _ = try e.start(sessionId: "w1", mode: .indoorRunning)
+        store.failAppends = true
+        _ = try e.finish(sessionId: "w1")
+        store.failAppends = false
+        XCTAssertEqual(errorCode { _ = try e.start(sessionId: "w2", mode: .indoorRunning) }, "RECOVERY_REQUIRED")
+        XCTAssertEqual(e.activeSessionId(), "w1")
+        XCTAssertNil(store.files["w2"])
+        try e.clearSession(sessionId: "w1") // discarding w1 on purpose frees the engine
+        let w2 = try e.start(sessionId: "w2", mode: .indoorRunning)
+        XCTAssertEqual(w2.sessionId, "w2")
+        XCTAssertFalse(w2.journalFailed)
+    }
+
+    func testASessionIdCannotBeReusedWhileItsJournalExists() throws {
+        let e = makeEngine()
+        _ = try e.start(sessionId: "w1", mode: .indoorRunning)
+        _ = try e.finish(sessionId: "w1")
+        let lines = store.files["w1"]
+        XCTAssertEqual(errorCode { _ = try e.start(sessionId: "w1", mode: .indoorRunning) }, "SESSION_EXISTS")
+        XCTAssertEqual(store.files["w1"], lines, "nothing was appended behind the first workout's journal")
+        try e.clearSession(sessionId: "w1")
+        _ = try e.start(sessionId: "w1", mode: .indoorRunning) // the id is free again
+    }
+
+    func testAnEmptyJournalFileStillTakesTheId() throws {
+        store.files["taken"] = []
+        let e = makeEngine()
+        XCTAssertEqual(errorCode { _ = try e.start(sessionId: "taken", mode: .indoorRunning) }, "SESSION_EXISTS")
+    }
+
+    func testAStartThatCannotWriteItsFirstLineLeavesTheIdFree() throws {
+        let e = makeEngine()
+        store.failAppends = true
+        XCTAssertEqual(errorCode { _ = try e.start(sessionId: "retry", mode: .indoorRunning) }, "JOURNAL_WRITE_FAILED")
+        store.failAppends = false
+        _ = try e.start(sessionId: "retry", mode: .indoorRunning) // not SESSION_EXISTS
+    }
+
+    func testASampleIsTimedWhenItArrivedNotWhenTheQueueGetsToIt() throws {
+        let e = makeEngine()
+        _ = try e.start(sessionId: "w1", mode: .indoorRunning)
+        counter(e, 0)
+        clock += 1000; _ = try e.pause(sessionId: "w1")
+        clock += 4000; _ = try e.resume(sessionId: "w1") // resumed at 6000
+        // samples that ARRIVED during the pause, processed after the resume
+        e.submitCounter(sessionId: "w1", source: foot, epoch: 1, meters: 100, ageMs: 0, receivedMonotonicMs: 3_000); e.flush()
+        e.submitCounter(sessionId: "w1", source: foot, epoch: 1, meters: 110, ageMs: 0, receivedMonotonicMs: 3_500); e.flush()
+        XCTAssertEqual(e.snapshot().distanceMeters, 0, accuracy: 1e-9)
+        clock += 500; counter(e, 120)
+        clock += 1000; counter(e, 125)
+        XCTAssertEqual(e.snapshot().distanceMeters, 5, accuracy: 1e-9)
+    }
+
+    func testRestoringAnotherWorkoutWhileOneIsOpenIsRefusedAndChangesNothing() throws {
+        let other = makeEngine()
+        _ = try other.start(sessionId: "w2", mode: .indoorRunning)
+        _ = try other.finish(sessionId: "w2") // w2 has a restorable journal
+        let e = makeEngine()
+        _ = try e.start(sessionId: "w1", mode: .indoorRunning)
+        XCTAssertEqual(errorCode { _ = try e.restore(sessionId: "w2") }, "SESSION_OPEN")
+        XCTAssertEqual(e.activeSessionId(), "w1")
+        XCTAssertEqual(e.snapshot().state, .running)
+    }
+
+    func testOnlyOneEngineOwnsTheJournalDirectory() {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let first = WorkoutDirectoryOwner(dir: dir)
+        let second = WorkoutDirectoryOwner(dir: dir)
+        XCTAssertTrue(first.tryAcquire())
+        XCTAssertTrue(first.tryAcquire(), "asking again is fine")
+        XCTAssertFalse(second.tryAcquire(), "a second engine must not get it")
+        first.release()
+        XCTAssertTrue(second.tryAcquire(), "after the first engine detached")
+        second.release()
     }
 }

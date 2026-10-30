@@ -1,4 +1,9 @@
 ## Unreleased
+- New: a stage can have a TIME goal. `ProgressMetric.duration` (target in SECONDS, no `allowedSources`): the engine completes the stage by its own clock (a pause is not in it), with the new `CompletionEvidence.timer`; the runners tick once a second, the completion is journaled before it is shown, and it is stamped at the moment the time was reached, not when the tick came. A MANUAL / JUDGE stage reaches its target and waits for the confirmation; `progress` of a timed stage is the seconds it ran. A running timed stage leaves a checkpoint event (`K`) every 10 s (unmeasured), so a crash loses at most that much of its time.
+- Both new enum values are appended (Pigeon + Dart + Kotlin + Swift); an old journal without them is read as before.
+- Fix: `start` is refused with `RECOVERY_REQUIRED` while the previous challenge finished in memory but its journal failed (the active pointer is its only way to recovery); `clearSession` discards it on purpose and frees the runner.
+- Fix: an EMPTY journal file still takes its id (`SESSION_EXISTS`, new `JournalStore.exists`); a start that cannot write its first line leaves the id free.
+- One engine owns the journal directory (exclusive lock): a second Flutter engine at the same time fails its commands with `OWNED_BY_ANOTHER_ENGINE` instead of writing the same files.
 - Fix: a session id is used once. `start` with an id whose journal exists is refused with `SESSION_EXISTS` (nothing is appended behind the old journal); `clearSession` frees the id.
 - Fix: a completed challenge releases the active pointer (`activeSessionId()` is null), but only after the completion is on the disk.
 - Fix: a sample is timed when it ARRIVED at the plugin (minus its age), not when the executor gets to it, on Android and iOS.

@@ -112,6 +112,9 @@ class ChallengeSession private constructor(
 
     fun nextStage(atMs: Long): ChallengeResult = after(engine.nextStage(atMs), atMs)
 
+    /** The clock of a DURATION stage: call it about once a second (see [ChallengeEngine.tick]). */
+    fun tick(atMs: Long): ChallengeResult = after(engine.tick(atMs), atMs)
+
     /** A pause or a resume forgets every baseline: what moved while paused is never credited, however short the pause was. */
     fun pause(atMs: Long): ChallengeResult = after(engine.pause(atMs), atMs).also { forgetBaselines(it) }
     fun resume(atMs: Long): ChallengeResult = after(engine.resume(atMs), atMs).also { forgetBaselines(it) }

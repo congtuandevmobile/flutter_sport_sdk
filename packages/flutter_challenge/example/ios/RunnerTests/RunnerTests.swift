@@ -14,6 +14,7 @@ private final class MemoryStore: ChallengeJournalStore {
         if failAppends { throw NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "disk full"]) }
         files[sessionId, default: []].append(contentsOf: lines)
     }
+    func exists(sessionId: String) -> Bool { files[sessionId] != nil }
     func read(sessionId: String) throws -> [String] { files[sessionId] ?? [] }
     func clear(sessionId: String) throws { files[sessionId] = nil; if activeId == sessionId { activeId = nil } }
     func replaceKeepingOriginal(sessionId: String, lines: [String]) throws -> String {
@@ -311,13 +312,40 @@ final class RunnerTests: XCTestCase {
     }
 
     func testEveryEnumOfTheCoreHasItsPigeonTwinInTheSameOrder() {
-        XCTAssertEqual(ProgressMetric.values().size, Int32(NativeProgressMetric.reps.rawValue + 1))
+        XCTAssertEqual(ProgressMetric.values().size, Int32(NativeProgressMetric.duration.rawValue + 1))
         XCTAssertEqual(ProgressMetric.reps.ordinal, Int32(NativeProgressMetric.reps.rawValue))
+        XCTAssertEqual(ProgressMetric.duration.ordinal, Int32(NativeProgressMetric.duration.rawValue))
         XCTAssertEqual(CompletionPolicy.judgeRequired.ordinal, Int32(NativeCompletionPolicy.judgeRequired.rawValue))
         XCTAssertEqual(ChallengeState.paused.ordinal, Int32(NativeChallengeState.paused.rawValue))
         XCTAssertEqual(ChallengeState.completed.ordinal, Int32(NativeChallengeState.completed.rawValue))
         XCTAssertEqual(StageStatus.targetReached.ordinal, Int32(NativeStageStatus.targetReached.rawValue))
         XCTAssertEqual(CompletionEvidence.judge.ordinal, Int32(NativeCompletionEvidence.judge.rawValue))
+        XCTAssertEqual(CompletionEvidence.timer.ordinal, Int32(NativeCompletionEvidence.timer.rawValue))
+    }
+
+    func testATimedStageNeedsNoSourcesAndCompletesByTheRunnersOwnTick() throws {
+        let d = NativeChallengeDefinition(id: "x", version: 1, allowPause: true, stages: [
+            stage("football", .duration, 0.2, .auto, []), // 0.2 s, no sources: the clock completes it
+            stage("run", .runMeters, 100, .auto, ["gps"]),
+        ])
+        let r = makeRunner(snapshotEvery: 0.05)
+        _ = try r.start(sessionId: "s1", definition: d)
+        clock += 250 // the monotonic clock of the test jumps past the target
+        r.startTicker()
+        let waited = expectation(description: "ticks")
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.4) { waited.fulfill() }
+        wait(for: [waited], timeout: 3)
+        r.stopTicker()
+        let snap = r.snapshot()
+        XCTAssertEqual(snap.state, .transition)
+        XCTAssertEqual(snap.completed.first?.evidence, .timer)
+        XCTAssertEqual(snap.completed.first?.durationMs, 200)
+    }
+
+    func testAStageThatIsNotTimedStillNeedsItsSources() {
+        let d = NativeChallengeDefinition(id: "x", version: 1, allowPause: true, stages: [stage("run", .runMeters, 100, .auto, [])])
+        let r = makeRunner()
+        XCTAssertEqual(errorCode { _ = try r.start(sessionId: "s1", definition: d) }, "BAD_DEFINITION")
     }
 
     func testTheFileStoreAppendsReadsReplacesAtomicallyAndKeepsTheActivePointer() throws {
@@ -339,5 +367,138 @@ final class RunnerTests: XCTestCase {
         try s.clear(sessionId: "a/b c")
         XCTAssertEqual(try s.read(sessionId: "a/b c"), [])
         XCTAssertNil(s.activeSessionId())
+    }
+
+    // MARK: - Session lifecycle contract (mirrors the Android tests)
+
+    private func errorCode(_ block: () throws -> Void) -> String? {
+        do { try block() } catch { return (error as? ChallengeError)?.code }
+        return nil
+    }
+
+    private func singleRun() -> NativeChallengeDefinition {
+        NativeChallengeDefinition(id: "race", version: 1, allowPause: true, stages: [stage("run", .runMeters, 5, .auto, ["gps"])])
+    }
+
+    func testASessionIdCannotBeReusedWhileItsJournalExists() throws {
+        let r = makeRunner()
+        _ = try r.start(sessionId: "race-001", definition: singleRun())
+        counter(r, "gps", 1, 100, id: "race-001")
+        clock += 1000
+        counter(r, "gps", 1, 105, id: "race-001")
+        let lines = store.files["race-001"]
+        XCTAssertEqual(errorCode { _ = try r.start(sessionId: "race-001", definition: self.singleRun()) }, "SESSION_EXISTS")
+        XCTAssertEqual(store.files["race-001"], lines, "nothing was appended behind the first challenge's journal")
+        try r.clearSession(sessionId: "race-001")
+        _ = try r.start(sessionId: "race-001", definition: singleRun()) // the id is free again
+    }
+
+    func testAnEmptyJournalFileStillTakesTheId() throws {
+        store.files["taken"] = []
+        let r = makeRunner()
+        XCTAssertEqual(errorCode { _ = try r.start(sessionId: "taken", definition: self.singleRun()) }, "SESSION_EXISTS")
+    }
+
+    func testAStartThatCannotWriteItsFirstLineLeavesTheIdFree() throws {
+        let r = makeRunner()
+        store.failAppends = true
+        XCTAssertEqual(errorCode { _ = try r.start(sessionId: "retry", definition: self.singleRun()) }, "JOURNAL_WRITE_FAILED")
+        store.failAppends = false
+        _ = try r.start(sessionId: "retry", definition: singleRun()) // not SESSION_EXISTS
+    }
+
+    func testACompletedChallengeReleasesTheActivePointerOnlyOnceItIsOnTheDisk() throws {
+        let r = makeRunner()
+        _ = try r.start(sessionId: "race-001", definition: singleRun())
+        XCTAssertEqual(r.activeSessionId(), "race-001")
+        counter(r, "gps", 1, 100, id: "race-001")
+        clock += 1000
+        counter(r, "gps", 1, 105, id: "race-001")
+        XCTAssertEqual(r.snapshot().state, .completed)
+        XCTAssertNil(r.activeSessionId())
+
+        let r2 = makeRunner()
+        _ = try r2.start(sessionId: "race-002", definition: singleRun())
+        counter(r2, "gps", 1, 100, id: "race-002")
+        clock += 1000
+        store.failAppends = true // the completion cannot be written: the pointer that finds the challenge to recover must stay
+        counter(r2, "gps", 1, 105, id: "race-002")
+        XCTAssertEqual(r2.activeSessionId(), "race-002")
+        XCTAssertTrue(r2.snapshot().journalFailed)
+    }
+
+    func testANewChallengeCannotReplaceTheRecoveryPointerOfOneWhoseCompletionWasNotWritten() throws {
+        let r = makeRunner()
+        _ = try r.start(sessionId: "A", definition: singleRun())
+        counter(r, "gps", 1, 100, id: "A")
+        clock += 1000
+        store.failAppends = true
+        counter(r, "gps", 1, 105, id: "A") // A completes in memory, the completion is not on the disk
+        store.failAppends = false
+        XCTAssertEqual(r.snapshot().state, .completed)
+        XCTAssertTrue(r.snapshot().journalFailed)
+        XCTAssertEqual(errorCode { _ = try r.start(sessionId: "B", definition: self.singleRun()) }, "RECOVERY_REQUIRED")
+        XCTAssertEqual(r.activeSessionId(), "A")
+        XCTAssertNil(store.files["B"])
+        try r.clearSession(sessionId: "A") // discarding A on purpose frees the runner
+        let b = try r.start(sessionId: "B", definition: singleRun())
+        XCTAssertEqual(b.sessionId, "B")
+        XCTAssertFalse(b.journalFailed)
+    }
+
+    func testASampleIsTimedWhenItArrivedNotWhenTheQueueGetsToIt() throws {
+        let d = NativeChallengeDefinition(id: "x", version: 1, allowPause: true, stages: [stage("run", .runMeters, 1000, .auto, ["gps"])])
+        let r = makeRunner()
+        _ = try r.start(sessionId: "s1", definition: d)
+        clock = 1_000; counter(r, "gps", 1, 100)
+        clock = 2_000; _ = try r.pause(sessionId: "s1")
+        clock = 5_000; _ = try r.resume(sessionId: "s1")
+        // two samples that ARRIVED during the pause (3.0 s, 3.5 s) but are processed after the resume
+        r.submitCounter(sessionId: "s1", sourceId: "gps", epoch: 1, meters: 120, ageMs: 0, receivedMonotonicMs: 3_000); r.flush()
+        r.submitCounter(sessionId: "s1", sourceId: "gps", epoch: 1, meters: 125, ageMs: 0, receivedMonotonicMs: 3_500); r.flush()
+        XCTAssertEqual(r.snapshot().stageProgress, 0, accuracy: 1e-9)
+        clock = 5_500; counter(r, "gps", 1, 140) // the first sample after the resume: a baseline
+        clock = 6_500; counter(r, "gps", 1, 145)
+        XCTAssertEqual(r.snapshot().stageProgress, 5, accuracy: 1e-9)
+    }
+
+    func testATapOrConfirmationMadeForAnOldStageIsRefusedOrDropped() throws {
+        let d = NativeChallengeDefinition(id: "x", version: 1, allowPause: true, stages: [
+            stage("a", .reps, 2, .manual, ["tap"]),
+            stage("b", .reps, 2, .manual, ["tap"]),
+        ])
+        let r = makeRunner()
+        let first = try r.start(sessionId: "s1", definition: d)
+        r.submitDelta(sessionId: "s1", sourceId: "tap", eventId: "t1", delta: 2, ageMs: 0, stageActivation: first.stageActivation); r.flush()
+        _ = try r.confirm(sessionId: "s1", evidence: .manual, expectedStageActivation: first.stageActivation)
+        _ = try r.nextStage(sessionId: "s1")
+        r.submitDelta(sessionId: "s1", sourceId: "tap", eventId: "t2", delta: 1, ageMs: 0, stageActivation: first.stageActivation); r.flush() // the callback of stage a, in stage b
+        XCTAssertEqual(r.snapshot().stageProgress, 0, accuracy: 1e-9)
+        XCTAssertEqual(errorCode { _ = try r.confirm(sessionId: "s1", evidence: .manual, expectedStageActivation: first.stageActivation) }, "STALE_ACTIVATION")
+        XCTAssertEqual(r.snapshot().state, .active)
+    }
+
+    func testRestoringAnotherChallengeWhileOneIsOpenIsRefusedAndChangesNothing() throws {
+        let d = NativeChallengeDefinition(id: "x", version: 1, allowPause: true, stages: [stage("a", .reps, 1, .auto, ["m"])])
+        let other = makeRunner()
+        _ = try other.start(sessionId: "b", definition: d)
+        other.submitDelta(sessionId: "b", sourceId: "m", eventId: "1", delta: 1, ageMs: 0); other.flush() // b is completed: restorable
+        let r = makeRunner()
+        _ = try r.start(sessionId: "s1", definition: definition())
+        XCTAssertEqual(errorCode { _ = try r.restore(sessionId: "b") }, "SESSION_OPEN")
+        XCTAssertEqual(r.activeSessionId(), "s1")
+        XCTAssertEqual(r.snapshot().stageId, "run-1")
+    }
+
+    func testOnlyOneEngineOwnsTheJournalDirectory() {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let first = ChallengeDirectoryOwner(dir: dir)
+        let second = ChallengeDirectoryOwner(dir: dir)
+        XCTAssertTrue(first.tryAcquire())
+        XCTAssertTrue(first.tryAcquire(), "asking again is fine")
+        XCTAssertFalse(second.tryAcquire(), "a second engine must not get it")
+        first.release()
+        XCTAssertTrue(second.tryAcquire(), "after the first engine detached")
+        second.release()
     }
 }

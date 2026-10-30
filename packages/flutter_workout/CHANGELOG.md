@@ -1,5 +1,10 @@
 ## Unreleased
 
+* Fix: `finish` keeps the active pointer when the Finished line could not be written (`journalFailed`); the Finished event, the pointer and the snapshot are now one serialized step, so the snapshot already shows the failure.
+* Fix: `start` is refused with `RECOVERY_REQUIRED` while the previous workout finished in memory but its journal failed; `clearSession` discards it on purpose.
+* Fix: an EMPTY journal file still takes its id (`SESSION_EXISTS`, new `JournalStore.exists`); a start that cannot write its first line leaves the id free.
+* One engine owns the journal directory (exclusive lock): a second Flutter engine at the same time fails its commands with `OWNED_BY_ANOTHER_ENGINE`.
+
 * Fix: a session id is used once. `start` with an id whose journal exists is refused with `SESSION_EXISTS`; `clearSession` frees the id.
 * Fix: a sample is timed when it ARRIVED at the plugin (minus its age), not when the executor gets to it, on Android and iOS.
 

@@ -8,6 +8,13 @@ enum class ProgressMetric(val maxRatePerSecond: Double) {
     SLED_METERS(5.0),
     SWIM_METERS(3.0),
     REPS(5.0),
+
+    /**
+     * Not a measurement: the ACTIVE time of the stage (a pause is not in it). `target` is in seconds and the engine itself completes the
+     * stage when the time is reached (see [challenge.engine.ChallengeEngine.tick]); no source feeds it, so `allowedSources` may be empty.
+     * APPEND ONLY: the order is the order of the Pigeon enum.
+     */
+    DURATION(1.0),
 }
 
 /** How a stage is completed. */
@@ -27,7 +34,7 @@ enum class CompletionPolicy {
 
 enum class ChallengeState { IDLE, ACTIVE, TRANSITION, PAUSED, COMPLETED }
 enum class StageStatus { PENDING, ACTIVE, TARGET_REACHED, COMPLETED }
-enum class CompletionEvidence { SENSOR, MANUAL, JUDGE }
+enum class CompletionEvidence { SENSOR, MANUAL, JUDGE, /** The stage clock reached a DURATION target (APPEND ONLY). */ TIMER }
 
 class StageDefinition(
     val id: String,
@@ -40,7 +47,7 @@ class StageDefinition(
     init {
         require(id.isNotBlank()) { "stage id" }
         require(target.isFinite() && target > 0.0) { "stage target" }
-        require(allowedSources.isNotEmpty() && allowedSources.none { it.isBlank() }) { "stage sources" }
+        require(allowedSources.none { it.isBlank() } && (allowedSources.isNotEmpty() || metric == ProgressMetric.DURATION)) { "stage sources" }
     }
 }
 
@@ -117,6 +124,12 @@ sealed class ChallengeEvent {
     class Paused(override val seq: Long, override val atMs: Long, val reason: String) : ChallengeEvent()
     class Resumed(override val seq: Long, override val atMs: Long) : ChallengeEvent()
     class Completed(override val seq: Long, override val atMs: Long) : ChallengeEvent()
+
+    /**
+     * "The challenge was alive at [atMs]": written now and then while a DURATION stage runs, so that after the process dies the stage is
+     * restored with the time it had already run (up to the last checkpoint) instead of the time of its last progress event.
+     */
+    class Checkpoint(override val seq: Long, override val atMs: Long) : ChallengeEvent()
 }
 
 class ChallengeSnapshot(

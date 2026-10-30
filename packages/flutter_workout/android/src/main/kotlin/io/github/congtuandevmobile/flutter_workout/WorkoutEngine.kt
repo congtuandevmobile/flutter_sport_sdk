@@ -73,17 +73,23 @@ class WorkoutEngine(
             if (open != null && (open.currentState == WorkoutState.RUNNING || open.currentState == WorkoutState.PAUSED)) {
                 throw WorkoutException("SESSION_OPEN", "workout $sessionId is still open")
             }
+            // The previous workout finished in memory but its journal is NOT (fully) on the disk: the active pointer is the only way to
+            // recover it, and a new workout would replace it. Recover it, or discard it on purpose with clearSession.
+            if (open != null && journalFailed) {
+                throw WorkoutException("RECOVERY_REQUIRED", "the previous workout $sessionId has a journal failure: recover it or clear it first")
+            }
             if (id.isBlank()) throw WorkoutException("BAD_SESSION", "the session id is empty")
             // A session id is used ONCE: lines appended behind another workout's journal would be restored as that workout.
-            val existing = try { store.read(id) } catch (e: IOException) { throw WorkoutException("JOURNAL_WRITE_FAILED", e.message ?: "I/O error") }
-            if (existing.isNotEmpty()) throw WorkoutException("SESSION_EXISTS", "a journal already exists for $id: clear it or use another id")
+            if (store.exists(id)) throw WorkoutException("SESSION_EXISTS", "a journal already exists for $id: clear it or use another id")
             val created = WorkoutSession.forMode(WorkoutMode.valueOf(mode.name))
             val events = created.start(now())
             try {
                 store.append(id, events.map { WorkoutJournal.encode(it) })
                 store.setActive(id)
             } catch (e: IOException) {
-                // A workout that cannot even write its first line is not started: nothing would survive the process dying.
+                // A workout that cannot even write its first line is not started: nothing would survive the process dying. What the
+                // attempt left behind (an empty file) must not make the id look taken on the next try.
+                try { store.clear(id) } catch (_: IOException) {}
                 throw WorkoutException("JOURNAL_WRITE_FAILED", e.message ?: "I/O error")
             }
             session = created
@@ -98,14 +104,21 @@ class WorkoutEngine(
     fun pause(id: String): NativeWorkoutSnapshot = change(id) { it.pause(now()) }
     fun resume(id: String): NativeWorkoutSnapshot = change(id) { it.resume(now()) }
 
+    /**
+     * Finishes the workout. The Finished event is persisted and the active pointer released in ONE locked step, BEFORE the snapshot is
+     * built, so the snapshot already shows a failed write. The pointer goes only when the Finished line is really on the disk: with a
+     * journal failure the journal may still say "running", and the pointer is what leads to it after a crash.
+     */
     fun finish(id: String): NativeWorkoutSnapshot {
-        val result = change(id) { it.finish(now()) }
         synchronized(lock) {
-            if (session?.currentState == WorkoutState.FINISHED) {
+            val s = session
+            if (s == null || sessionId != id) throw WorkoutException("NO_SESSION", "no open workout $id")
+            persist(s.finish(now()))
+            if (s.currentState == WorkoutState.FINISHED && !journalFailed) {
                 try { store.setActive(null) } catch (e: IOException) { fail(e) }
             }
         }
-        return result
+        return snapshotAndPublish()
     }
 
     /** The phone's monotonic time NOW: the plugin takes it when a sample ARRIVES, before the sample waits in the queue. */
@@ -180,6 +193,8 @@ class WorkoutEngine(
             if (sessionId == id) {
                 session = null
                 sessionId = null
+                journalFailed = false
+                error = null
             }
         }
         publish()

@@ -53,10 +53,20 @@ final class ChallengeRunner {
             guard let self = self, self.ticker == nil else { return }
             let timer = DispatchSource.makeTimerSource(queue: self.queue)
             timer.schedule(deadline: .now() + self.snapshotEvery, repeating: self.snapshotEvery)
-            timer.setEventHandler { [weak self] in self?.publish() }
+            timer.setEventHandler { [weak self] in self?.tickAndPublish() }
             timer.resume()
             self.ticker = timer
         }
+    }
+
+    /// Once a second, on the queue: the clock of a DURATION stage (it may complete, or leave a checkpoint), journaled BEFORE the snapshot.
+    private func tickAndPublish() {
+        if let s = session, sessionId != nil {
+            let result = s.tick(atMs: now())
+            persist(result.events)
+            releaseActiveIfCompleted(s)
+        }
+        publish()
     }
 
     func stopTicker() {
@@ -76,13 +86,14 @@ final class ChallengeRunner {
             if let open = session, open.currentState != .completed {
                 throw ChallengeError(code: "SESSION_OPEN", message: "challenge \(sessionId ?? "") is still open")
             }
+            // The previous challenge finished in memory but its journal is NOT (fully) on the disk: the active pointer is the only way
+            // to recover it, and a new challenge would replace it. Recover it, or discard it on purpose with clearSession.
+            if session != nil, journalFailed {
+                throw ChallengeError(code: "RECOVERY_REQUIRED", message: "the previous challenge \(sessionId ?? "") has a journal failure: recover it or clear it first")
+            }
             if id.trimmingCharacters(in: .whitespaces).isEmpty { throw ChallengeError(code: "BAD_SESSION", message: "the session id is empty") }
             // A session id is used ONCE: lines appended behind another challenge's journal would be restored as that challenge.
-            let existing: [String]
-            do { existing = try store.read(sessionId: id) } catch {
-                throw ChallengeError(code: "JOURNAL_WRITE_FAILED", message: error.localizedDescription)
-            }
-            if !existing.isEmpty { throw ChallengeError(code: "SESSION_EXISTS", message: "a journal already exists for \(id): clear it or use another id") }
+            if store.exists(sessionId: id) { throw ChallengeError(code: "SESSION_EXISTS", message: "a journal already exists for \(id): clear it or use another id") }
             guard let core = Self.coreDefinition(definition) else {
                 throw ChallengeError(code: "BAD_DEFINITION", message: "the definition breaks its rules")
             }
@@ -92,7 +103,9 @@ final class ChallengeRunner {
                 try store.append(sessionId: id, lines: result.events.map { ChallengeJournal.shared.encode(e: $0) })
                 try store.setActive(id)
             } catch {
-                // A challenge that cannot even write its first line is not started: nothing would survive the process dying.
+                // A challenge that cannot even write its first line is not started: nothing would survive the process dying. What
+                // the attempt left behind (an empty file) must not make the id look taken on the next try.
+                try? store.clear(sessionId: id)
                 throw ChallengeError(code: "JOURNAL_WRITE_FAILED", message: error.localizedDescription)
             }
             session = created
@@ -188,6 +201,8 @@ final class ChallengeRunner {
             if sessionId == id {
                 session = nil
                 sessionId = nil
+                journalFailed = false
+                error = nil
             }
             publish()
         }
@@ -297,7 +312,9 @@ final class ChallengeRunner {
         else { return nil }
         var stages: [StageDefinition] = []
         for s in d.stages {
-            guard !s.id.trimmingCharacters(in: .whitespaces).isEmpty, s.target.isFinite, s.target > 0, !s.allowedSources.isEmpty,
+            // a DURATION stage is fed by no source (its clock completes it), every other stage needs at least one
+            guard !s.id.trimmingCharacters(in: .whitespaces).isEmpty, s.target.isFinite, s.target > 0,
+                !s.allowedSources.isEmpty || s.metric == .duration,
                 s.allowedSources.allSatisfy({ !$0.trimmingCharacters(in: .whitespaces).isEmpty })
             else { return nil }
             stages.append(StageDefinition(
@@ -315,6 +332,7 @@ final class ChallengeRunner {
         case .sledMeters: return .sledMeters
         case .swimMeters: return .swimMeters
         case .reps: return .reps
+        case .duration: return .duration
         }
     }
 
@@ -332,6 +350,7 @@ final class ChallengeRunner {
         case .sensor: return .sensor
         case .manual: return .manual
         case .judge: return .judge
+        case .timer: return .timer
         }
     }
 

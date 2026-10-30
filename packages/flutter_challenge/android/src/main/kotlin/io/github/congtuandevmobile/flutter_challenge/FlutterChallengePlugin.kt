@@ -26,6 +26,10 @@ class FlutterChallengePlugin : FlutterPlugin, ChallengeHostApi, ChallengeSink {
     private var scope: CoroutineScope? = null
     private var flutterApi: ChallengeFlutterApi? = null
     private val main = Handler(Looper.getMainLooper())
+    private var owner: JournalDirectoryOwner? = null
+
+    /** True when another Flutter engine of the app already owns the journal directory: every command then fails, nothing is written. */
+    private var notOwner = false
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         val thread = Executors.newSingleThreadExecutor { Thread(it, "flutter_challenge") }
@@ -33,10 +37,15 @@ class FlutterChallengePlugin : FlutterPlugin, ChallengeHostApi, ChallengeSink {
         val newScope = CoroutineScope(SupervisorJob() + thread.asCoroutineDispatcher())
         scope = newScope
         flutterApi = ChallengeFlutterApi(binding.binaryMessenger)
-        val store = FileChallengeJournalStore(File(binding.applicationContext.filesDir, "flutter_challenge"))
-        val newRunner = ChallengeRunner(store, newScope, { SystemClock.elapsedRealtime() }, this)
-        runner = newRunner
-        newRunner.start()
+        val dir = File(binding.applicationContext.filesDir, "flutter_challenge")
+        val newOwner = JournalDirectoryOwner(dir)
+        notOwner = !newOwner.tryAcquire()
+        if (!notOwner) {
+            owner = newOwner
+            val newRunner = ChallengeRunner(FileChallengeJournalStore(dir), newScope, { SystemClock.elapsedRealtime() }, this)
+            runner = newRunner
+            newRunner.start()
+        }
         ChallengeHostApi.setUp(binding.binaryMessenger, this)
     }
 
@@ -44,6 +53,9 @@ class FlutterChallengePlugin : FlutterPlugin, ChallengeHostApi, ChallengeSink {
         ChallengeHostApi.setUp(binding.binaryMessenger, null)
         runner?.stop()
         runner = null
+        owner?.release()
+        owner = null
+        notOwner = false
         scope?.cancel()
         scope = null
         executor?.shutdown()
@@ -60,7 +72,8 @@ class FlutterChallengePlugin : FlutterPlugin, ChallengeHostApi, ChallengeSink {
         }
         thread.execute {
             val result: Result<T> = try {
-                val r = runner ?: throw ChallengeException("DETACHED", "the plugin is detached")
+                val r = runner ?: throw (if (notOwner) ChallengeException("OWNED_BY_ANOTHER_ENGINE", "this plugin does not own the journal directory: another Flutter engine of the app already does (one engine at a time)")
+                    else ChallengeException("DETACHED", "the plugin is detached"))
                 Result.success(block(r))
             } catch (ex: ChallengeException) {
                 Result.failure(FlutterError(ex.code, ex.message, null))

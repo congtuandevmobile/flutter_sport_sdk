@@ -81,20 +81,23 @@ final class WorkoutEngine {
             if let open = session, open.currentState == .running || open.currentState == .paused {
                 throw WorkoutError(code: "SESSION_OPEN", message: "workout \(sessionId ?? "") is still open")
             }
+            // The previous workout finished in memory but its journal is NOT (fully) on the disk: the active pointer is the only way to
+            // recover it, and a new workout would replace it. Recover it, or discard it on purpose with clearSession.
+            if session != nil, journalFailed {
+                throw WorkoutError(code: "RECOVERY_REQUIRED", message: "the previous workout \(sessionId ?? "") has a journal failure: recover it or clear it first")
+            }
             if id.trimmingCharacters(in: .whitespaces).isEmpty { throw WorkoutError(code: "BAD_SESSION", message: "the session id is empty") }
             // A session id is used ONCE: lines appended behind another workout's journal would be restored as that workout.
-            let existing: [String]
-            do { existing = try store.read(sessionId: id) } catch {
-                throw WorkoutError(code: "JOURNAL_WRITE_FAILED", message: error.localizedDescription)
-            }
-            if !existing.isEmpty { throw WorkoutError(code: "SESSION_EXISTS", message: "a journal already exists for \(id): clear it or use another id") }
+            if store.exists(sessionId: id) { throw WorkoutError(code: "SESSION_EXISTS", message: "a journal already exists for \(id): clear it or use another id") }
             let created = WorkoutSession.Companion.shared.forMode(mode: Self.coreMode(mode))
             let events = created.start(nowMs: now())
             do {
                 try store.append(sessionId: id, lines: events.map { WorkoutJournal.shared.encode(e: $0) })
                 try store.setActive(id)
             } catch {
-                // A workout that cannot even write its first line is not started: nothing would survive the process dying.
+                // A workout that cannot even write its first line is not started: nothing would survive the process dying. What the
+                // attempt left behind (an empty file) must not make the id look taken on the next try.
+                try? store.clear(sessionId: id)
                 throw WorkoutError(code: "JOURNAL_WRITE_FAILED", message: error.localizedDescription)
             }
             session = created
@@ -109,14 +112,18 @@ final class WorkoutEngine {
     func pause(sessionId id: String) throws -> NativeWorkoutSnapshot { try change(id) { $0.pause(nowMs: self.now()) } }
     func resume(sessionId id: String) throws -> NativeWorkoutSnapshot { try change(id) { $0.resume(nowMs: self.now()) } }
 
+    /// Finishes the workout. The Finished event is persisted and the active pointer released in ONE serialized step, BEFORE the snapshot
+    /// is built, so the snapshot already shows a failed write. The pointer goes only when the Finished line is really on the disk: with a
+    /// journal failure the journal may still say "running", and the pointer is what leads to it after a crash.
     func finish(sessionId id: String) throws -> NativeWorkoutSnapshot {
-        let result = try change(id) { $0.finish(nowMs: self.now()) }
-        queue.sync {
-            if session?.currentState == .finished {
+        try queue.sync {
+            guard let s = session, sessionId == id else { throw WorkoutError(code: "NO_SESSION", message: "no open workout \(id)") }
+            persist(s.finish(nowMs: now()))
+            if s.currentState == .finished, !journalFailed {
                 do { try store.setActive(nil) } catch { fail(error) }
             }
+            return publishedSnapshot()
         }
-        return result
     }
 
     /// The phone's monotonic time NOW: the plugin takes it when a sample ARRIVES, before the sample waits in the queue.
@@ -200,6 +207,8 @@ final class WorkoutEngine {
             if sessionId == id {
                 session = nil
                 sessionId = nil
+                journalFailed = false
+                error = nil
             }
             publish()
         }

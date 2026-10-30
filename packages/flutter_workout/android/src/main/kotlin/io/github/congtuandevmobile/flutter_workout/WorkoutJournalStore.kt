@@ -15,6 +15,9 @@ interface WorkoutJournalStore {
     @Throws(IOException::class)
     fun read(sessionId: String): List<String>
 
+    /** Whether a journal file for [sessionId] exists, EVEN an empty one: an id is used once, so an empty file still means "taken". */
+    fun exists(sessionId: String): Boolean
+
     @Throws(IOException::class)
     fun clear(sessionId: String)
 
@@ -50,6 +53,8 @@ class FileWorkoutJournalStore(private val dir: File) : WorkoutJournalStore {
             out.fd.sync()
         }
     }
+
+    override fun exists(sessionId: String): Boolean = file(sessionId).exists()
 
     override fun read(sessionId: String): List<String> {
         val f = file(sessionId)
@@ -94,5 +99,50 @@ class FileWorkoutJournalStore(private val dir: File) : WorkoutJournalStore {
     /** A file name from an id: letters and digits stay, anything else is written as its hex code, so two ids never collide. */
     private fun safe(id: String): String = buildString {
         for (c in id) if (c.isLetterOrDigit() && c.code < 128) append(c) else append('_').append(c.code.toString(16)).append('_')
+    }
+}
+
+/**
+ * Exactly ONE Flutter engine may own the journal directory: two runners that do not know each other would write the same files.
+ * The owner holds an exclusive lock on `.owner.lock` in [dir] while its plugin is attached (the OS drops it if the process dies). A
+ * second engine in the same process (or another process) does not get it: its commands fail with `OWNED_BY_ANOTHER_ENGINE` instead
+ * of racing the first one. Hot reload does not matter; a second engine that lives at the same time does.
+ */
+class JournalDirectoryOwner(private val dir: File) {
+    private var channel: java.nio.channels.FileChannel? = null
+    private var lock: java.nio.channels.FileLock? = null
+
+    /** True when this owner now holds the directory (or already did). */
+    @Synchronized
+    fun tryAcquire(): Boolean {
+        if (lock != null) return true
+        dir.mkdirs()
+        var opened: java.nio.channels.FileChannel? = null
+        return try {
+            opened = java.io.RandomAccessFile(File(dir, ".owner.lock"), "rw").channel
+            val taken = opened.tryLock()
+            if (taken == null) {
+                opened.close()
+                false
+            } else {
+                channel = opened
+                lock = taken
+                true
+            }
+        } catch (e: java.nio.channels.OverlappingFileLockException) { // held by another engine of THIS process
+            try { opened?.close() } catch (_: IOException) {}
+            false
+        } catch (e: IOException) {
+            try { opened?.close() } catch (_: IOException) {}
+            false
+        }
+    }
+
+    @Synchronized
+    fun release() {
+        try { lock?.release() } catch (_: IOException) {}
+        try { channel?.close() } catch (_: IOException) {}
+        lock = null
+        channel = null
     }
 }

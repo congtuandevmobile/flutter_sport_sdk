@@ -10,6 +10,10 @@ import Foundation
 public final class FlutterWorkoutPlugin: NSObject, FlutterPlugin, WorkoutHostApi, WorkoutSink {
     private var engine: WorkoutEngine?
     private var flutterApi: WorkoutFlutterApi?
+    private var owner: WorkoutDirectoryOwner?
+
+    /// True when another Flutter engine of the app already owns the journal directory: every command then fails, nothing is written.
+    private var notOwner = false
     private let calls = DispatchQueue(label: "flutter_workout.calls")
 
     public static func register(with registrar: FlutterPluginRegistrar) {
@@ -17,9 +21,15 @@ public final class FlutterWorkoutPlugin: NSObject, FlutterPlugin, WorkoutHostApi
         instance.flutterApi = WorkoutFlutterApi(binaryMessenger: registrar.messenger())
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("flutter_workout", isDirectory: true)
-        let engine = WorkoutEngine(store: FileWorkoutJournalStore(dir: support), sink: instance)
-        instance.engine = engine
-        engine.startTicker()
+        let owner = WorkoutDirectoryOwner(dir: support)
+        if owner.tryAcquire() {
+            instance.owner = owner
+            let engine = WorkoutEngine(store: FileWorkoutJournalStore(dir: support), sink: instance)
+            instance.engine = engine
+            engine.startTicker()
+        } else {
+            instance.notOwner = true
+        }
         WorkoutHostApiSetup.setUp(binaryMessenger: registrar.messenger(), api: instance)
         registrar.publish(instance)
     }
@@ -28,6 +38,9 @@ public final class FlutterWorkoutPlugin: NSObject, FlutterPlugin, WorkoutHostApi
         WorkoutHostApiSetup.setUp(binaryMessenger: registrar.messenger(), api: nil)
         engine?.stopTicker()
         engine = nil
+        owner?.release()
+        owner = nil
+        notOwner = false
         flutterApi = nil
     }
 
@@ -42,7 +55,11 @@ public final class FlutterWorkoutPlugin: NSObject, FlutterPlugin, WorkoutHostApi
                     result = .failure(PigeonError(code: "WORKOUT_FAILED", message: error.localizedDescription, details: nil))
                 }
             } else {
-                result = .failure(PigeonError(code: "DETACHED", message: "the plugin is detached", details: nil))
+                if self?.notOwner == true {
+                    result = .failure(PigeonError(code: "OWNED_BY_ANOTHER_ENGINE", message: "this plugin does not own the journal directory: another Flutter engine of the app already does (one engine at a time)", details: nil))
+                } else {
+                    result = .failure(PigeonError(code: "DETACHED", message: "the plugin is detached", details: nil))
+                }
             }
             DispatchQueue.main.async { completion(result) }
         }

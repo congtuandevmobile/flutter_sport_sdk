@@ -12,7 +12,8 @@ import 'package:pigeon/pigeon.dart';
 )
 
 /// Order matches `challenge.model.ProgressMetric` of the shared core (a test of each engine fails if it drifts).
-enum NativeProgressMetric { runMeters, rowMeters, skiMeters, sledMeters, swimMeters, reps }
+/// APPEND ONLY. `duration`: the stage's goal is TIME (target in seconds, the engine completes it by its own clock; no sources).
+enum NativeProgressMetric { runMeters, rowMeters, skiMeters, sledMeters, swimMeters, reps, duration }
 
 /// Order matches `challenge.model.CompletionPolicy`.
 enum NativeCompletionPolicy { auto, manual, sensorOrManual, judgeRequired }
@@ -24,7 +25,8 @@ enum NativeChallengeState { idle, active, transition, paused, completed }
 enum NativeStageStatus { pending, active, targetReached, completed }
 
 /// Order matches `challenge.model.CompletionEvidence`.
-enum NativeCompletionEvidence { sensor, manual, judge }
+/// APPEND ONLY. `timer`: the stage clock reached a duration target.
+enum NativeCompletionEvidence { sensor, manual, judge, timer }
 
 /// What a restore found in the journal.
 enum NativeRestoreStatus { notRestored, intact, tailRepaired, partial }
