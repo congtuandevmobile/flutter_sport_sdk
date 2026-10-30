@@ -8,7 +8,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 app="$root/examples/sensors_demo"
-(cd "$app" && flutter pub get >/dev/null)
+(cd "$app" && flutter pub get >/dev/null && flutter build apk --config-only >/dev/null) # --config-only creates the git-ignored gradlew
 (cd "$app/android" && ./gradlew :app:processDebugMainManifest -q)
 
 manifest="$app/build/app/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml"

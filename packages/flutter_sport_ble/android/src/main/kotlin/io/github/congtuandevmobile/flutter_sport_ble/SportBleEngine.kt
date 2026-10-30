@@ -188,7 +188,14 @@ class SportBleEngine(
                     batteryPercent = details.batteryPercent?.toLong(),
                 )
             }
-            return NativeSensorSnapshot(metrics = metrics, devices = states, updatedAtMs = now)
+            val deviceValues = hub.deviceValues(now).map {
+                NativeDeviceMetric(
+                    deviceId = it.sourceId, epoch = it.epoch, metric = NativeMetric.valueOf(it.metric.name), value = it.value,
+                    kind = if (it.kind == MeasurementKind.CUMULATIVE) NativeKind.CUMULATIVE else NativeKind.INSTANTANEOUS,
+                    ageMs = it.ageMs,
+                )
+            }
+            return NativeSensorSnapshot(metrics = metrics, deviceValues = deviceValues, devices = states, updatedAtMs = now)
         }
     }
 

@@ -74,7 +74,7 @@ class FlutterSportBlePlugin : FlutterPlugin, SportBleHostApi, SportBleSink {
     override fun setPreferredSource(metric: NativeMetric, deviceId: String?) { engine?.setPreferred(metric, deviceId) }
     override fun setWheelCircumference(deviceId: String, metres: Double?) { engine?.setWheelCircumference(deviceId, metres) }
     override fun snapshot(): NativeSensorSnapshot = engine?.snapshot()
-        ?: NativeSensorSnapshot(metrics = emptyList(), devices = emptyList(), updatedAtMs = 0)
+        ?: NativeSensorSnapshot(metrics = emptyList(), deviceValues = emptyList(), devices = emptyList(), updatedAtMs = 0)
 
     // ── SportBleSink (called from any thread; Flutter wants the main one) ───
 

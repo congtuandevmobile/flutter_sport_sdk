@@ -65,6 +65,7 @@ class NativeWorkoutSnapshot {
     this.sessionId,
     this.mode,
     this.distanceSource,
+    this.lastDistanceSource,
     this.error,
   });
 
@@ -79,8 +80,11 @@ class NativeWorkoutSnapshot {
   /// The workout distance. 0 while no source is chosen: never a guess.
   double distanceMeters;
 
-  /// Where the distance comes from now.
+  /// The source that is counting NOW: null when none is chosen yet or the chosen one went quiet (the distance so far is kept).
   NativeSourceRef? distanceSource;
+
+  /// The source that credited last, even if it went quiet: a history, not a promise that it is counting.
+  NativeSourceRef? lastDistanceSource;
 
   /// Sequence number of the last journal event.
   int lastSeq;
@@ -94,13 +98,18 @@ class NativeWorkoutSnapshot {
 
 @HostApi()
 abstract class WorkoutHostApi {
-  /// Starts a workout. Fails with SESSION_OPEN when another one is running or paused.
+  /// Starts a workout. Fails with SESSION_OPEN when another one is running or paused. Every command below runs on the engine's own
+  /// serial thread (the journal is written and synced there, never on the main thread) and answers after the write.
+  @async
   NativeWorkoutSnapshot start(String sessionId, NativeWorkoutMode mode);
 
+  @async
   NativeWorkoutSnapshot pause(String sessionId);
+  @async
   NativeWorkoutSnapshot resume(String sessionId);
 
   /// Ends the workout. The journal stays until [clearSession].
+  @async
   NativeWorkoutSnapshot finish(String sessionId);
 
   /// A cumulative distance (a GPS total, a footpod, a treadmill). [ageMs] is how old the value already is, so the sample is
@@ -112,19 +121,25 @@ abstract class WorkoutHostApi {
   void submitSpeed(String sessionId, NativeSourceRef source, int epoch, double mps, int ageMs);
 
   /// The user's choice of distance source (null clears it). Only used while that source is fresh.
+  @async
   void setPreferredSource(String sessionId, NativeSourceRef? source);
 
+  @async
   NativeWorkoutSnapshot snapshot();
 
   /// Rebuilds the session of [sessionId] from its journal after the process died. It comes back PAUSED (a session that was
   /// running); the time the process was dead is not activity and no distance is invented. If the engine already runs this
-  /// session, nothing is replayed.
+  /// session, nothing is replayed. A damaged journal is repaired ON DISK first (the damaged original is kept next to it for
+  /// diagnosis), so what is appended afterwards is never hidden behind the damage.
+  @async
   NativeWorkoutSnapshot restore(String sessionId);
 
   /// The id of the workout that was running or paused when it was last seen, or null.
+  @async
   String? activeSessionId();
 
   /// Deletes the journal of [sessionId].
+  @async
   void clearSession(String sessionId);
 }
 

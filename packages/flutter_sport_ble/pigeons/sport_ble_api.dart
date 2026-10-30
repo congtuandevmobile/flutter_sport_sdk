@@ -159,11 +159,43 @@ class NativeResolvedMetric {
   int ageMs;
 }
 
+/// The latest value of one metric of ONE device, before any source is chosen.
+class NativeDeviceMetric {
+  NativeDeviceMetric({
+    required this.deviceId,
+    required this.epoch,
+    required this.metric,
+    required this.value,
+    required this.kind,
+    required this.ageMs,
+  });
+
+  String deviceId;
+
+  /// The connection number of the device this value belongs to.
+  int epoch;
+  NativeMetric metric;
+  double value;
+  NativeKind kind;
+
+  /// How old the value is on this phone's clock (the consumer decides what is fresh).
+  int ageMs;
+}
+
 class NativeSensorSnapshot {
-  NativeSensorSnapshot({required this.metrics, required this.devices, required this.updatedAtMs});
+  NativeSensorSnapshot({
+    required this.metrics,
+    required this.deviceValues,
+    required this.devices,
+    required this.updatedAtMs,
+  });
 
   /// One entry per metric that has a healthy source; a metric without one is absent (unknown), never 0.
   List<NativeResolvedMetric> metrics;
+
+  /// What EACH connected device says, nothing chosen: a caller that needs a specific device's counter (a rower's distance next to a
+  /// footpod's) reads it here, because [metrics] keeps one source per metric.
+  List<NativeDeviceMetric> deviceValues;
   List<NativeDeviceState> devices;
   int updatedAtMs;
 }

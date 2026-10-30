@@ -6,19 +6,21 @@ comment or config may name an app or an app-specific class.
 ## Layout and direction of dependencies
 
 ```
-shared/sensor-core            Kotlin Multiplatform, pure: models, GATT numbers, parsers, per-metric resolver, SensorHub
-shared/workout-core           Kotlin Multiplatform, pure: workout session, distance ledger (counters, speed, baselines, source choice), workout journal and replay
-packages/flutter_tracking_gps GPS recording (own KMP core in its tracking-core/); knows nothing about Bluetooth
-packages/flutter_sport_ble    Bluetooth LE transport (Android/iOS native) on top of shared/sensor-core
-packages/flutter_workout      a workout session (Android/iOS native, journal on disk) on top of shared/workout-core
-examples/sensors_demo         one app with both plugins (a link/launch check)
+packages/flutter_tracking_gps   GPS recording; owns tracking-core/ (Kotlin Multiplatform, pure); knows nothing about Bluetooth
+packages/flutter_sport_ble      Bluetooth LE transport (Android/iOS native); owns sensor-core/ (parsers, per-metric resolver, SensorHub)
+packages/flutter_workout        a workout session (native, journal on disk); owns workout-core/ (session, distance ledger, journal)
+packages/flutter_challenge      a challenge session (native, own journal); owns challenge-core/ (event-sourced stages, journal, recovery)
+examples/sensors_demo           one app with the plugins (a link/launch check)
 ```
+
+Every package OWNS its core (`<name>-core/` inside the package) so it can be packaged, versioned, tested and released alone. A core
+never imports another product's core; products meet only in the app or in an optional adapter package above them.
 
 - Dependencies only point DOWN: a package never imports one above it, and `flutter_tracking_gps` and `flutter_sport_ble` never
   import each other. A future package that needs both (workouts) depends on both.
 - Dart: a pub workspace (root `pubspec.yaml`). Every package has `resolution: workspace`; the sibling packages are found by
   name. Run `flutter pub get` at the root.
-- Android: a plugin compiles the common Kotlin it needs straight into itself (`java.srcDirs("../../../shared/sensor-core/...")`).
+- Android: a plugin compiles the common Kotlin it needs straight into itself (`java.srcDirs("../sensor-core/src/commonMain/kotlin")`).
   iOS: each plugin vendors its OWN static XCFramework (`tool/build_core.sh`). Two plugins therefore carry two Kotlin/Native
   runtimes; this was linked and launched in `examples/sensors_demo`, but never put two cores in ONE framework or let a Kotlin
   object cross from one framework to the other.

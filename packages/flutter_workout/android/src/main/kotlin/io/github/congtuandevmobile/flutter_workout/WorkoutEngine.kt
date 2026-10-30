@@ -137,7 +137,19 @@ class WorkoutEngine(
                 JournalStatus.TAIL_REPAIRED -> NativeRestoreStatus.TAIL_REPAIRED
                 JournalStatus.PARTIAL -> NativeRestoreStatus.PARTIAL
             }
-            persist(recovered.restored.recoveryEvents)
+            // A damaged journal is cut on the disk BEFORE anything is appended: new lines behind a damaged one would be hidden from
+            // the next restore. The damaged original stays next to the journal. If the repair fails, nothing is appended.
+            var repaired = true
+            if (recovered.read.status != JournalStatus.INTACT) {
+                try {
+                    store.replaceKeepingOriginal(id, recovered.read.events.map { WorkoutJournal.encode(it) })
+                } catch (e: IOException) {
+                    repaired = false
+                    journalFailed = true
+                    error = "JOURNAL_REPAIR_FAILED: ${e.message ?: "I/O error"}"
+                }
+            }
+            if (repaired) persist(recovered.restored.recoveryEvents)
             try {
                 store.setActive(if (recovered.restored.session.currentState == WorkoutState.FINISHED) null else id)
             } catch (e: IOException) {
@@ -231,6 +243,7 @@ class WorkoutEngine(
             pausedMs = snap.pausedMs,
             distanceMeters = snap.distanceMeters,
             distanceSource = snap.distanceSource?.let { NativeSourceRef(it.id, NativeSourceKind.valueOf(it.kind.name)) },
+            lastDistanceSource = snap.lastDistanceSource?.let { NativeSourceRef(it.id, NativeSourceKind.valueOf(it.kind.name)) },
             lastSeq = snap.lastSeq,
             journalFailed = journalFailed,
             restoreStatus = restoreStatus,

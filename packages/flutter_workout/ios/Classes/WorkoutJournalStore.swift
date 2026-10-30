@@ -6,6 +6,10 @@ protocol WorkoutJournalStore: AnyObject {
     func append(sessionId: String, lines: [String]) throws
     func read(sessionId: String) throws -> [String]
     func clear(sessionId: String) throws
+    /// Replaces the journal by `lines` ATOMICALLY (a temporary file is written and synced, then moved over it) after keeping the
+    /// previous content next to it for diagnosis. Used to cut a damaged tail off, so that what is appended later is never hidden
+    /// behind the damage. Returns the name of the kept original.
+    func replaceKeepingOriginal(sessionId: String, lines: [String]) throws -> String
     /// The workout that was running or paused when it was last seen, or nil.
     func activeSessionId() -> String?
     func setActive(_ sessionId: String?) throws
@@ -39,6 +43,26 @@ final class FileWorkoutJournalStore: WorkoutJournalStore {
         let url = file(sessionId)
         guard manager.fileExists(atPath: url.path) else { return [] }
         return try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map(String.init).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+
+    func replaceKeepingOriginal(sessionId: String, lines: [String]) throws -> String {
+        let current = file(sessionId)
+        let kept = dir.appendingPathComponent(current.lastPathComponent + ".damaged-\(Int(Date().timeIntervalSince1970 * 1000))")
+        if manager.fileExists(atPath: current.path) { try manager.copyItem(at: current, to: kept) }
+        let temp = dir.appendingPathComponent(current.lastPathComponent + ".tmp")
+        manager.createFile(atPath: temp.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: temp)
+        do {
+            try handle.truncate(atOffset: 0)
+            try handle.write(contentsOf: Data((lines.isEmpty ? "" : lines.joined(separator: "\n") + "\n").utf8))
+            try handle.synchronize()
+            try handle.close()
+        } catch {
+            try? handle.close()
+            throw error
+        }
+        _ = try manager.replaceItemAt(current, withItemAt: temp)
+        return kept.lastPathComponent
     }
 
     func clear(sessionId: String) throws {

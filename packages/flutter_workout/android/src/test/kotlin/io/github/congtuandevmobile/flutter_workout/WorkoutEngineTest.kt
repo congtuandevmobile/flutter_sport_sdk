@@ -27,6 +27,14 @@ private class MemoryStore : WorkoutJournalStore {
     }
     override fun read(sessionId: String) = files[sessionId]?.toList() ?: emptyList()
     override fun clear(sessionId: String) { files.remove(sessionId); if (activeId == sessionId) activeId = null }
+    var failReplace = false
+    val originals = HashMap<String, List<String>>()
+    override fun replaceKeepingOriginal(sessionId: String, lines: List<String>): String {
+        if (failReplace) throw IOException("read-only")
+        originals[sessionId] = files[sessionId]?.toList() ?: emptyList()
+        files[sessionId] = lines.toMutableList()
+        return "kept"
+    }
     override fun activeSessionId() = activeId
     override fun setActive(sessionId: String?) { activeId = sessionId }
 }
@@ -174,7 +182,8 @@ class WorkoutEngineTest {
         assertEquals(distance, snap.distanceMeters, 1e-9)
         assertEquals(NativeRestoreStatus.INTACT, snap.restoreStatus)
         assertEquals(40_000L, snap.activeMs, "the hour the process was dead is not activity")
-        assertEquals(NativeSourceKind.COUNTER, snap.distanceSource!!.kind)
+        assertNull(snap.distanceSource, "nothing is counting until a sensor speaks again")
+        assertEquals(NativeSourceKind.COUNTER, snap.lastDistanceSource!!.kind)
         // resume: the first sample is a baseline, nothing is credited for the dead time
         e2.resume("w1")
         e2.submitCounter("w1", foot, 1, 1000.0, 0)
@@ -226,6 +235,49 @@ class WorkoutEngineTest {
         val lines = store.files.getValue("w1")
         lines[3] = lines[3].replace("|", "#")
         assertEquals(NativeRestoreStatus.PARTIAL, engine().restore("w1").restoreStatus)
+    }
+
+    @Test
+    fun aDamagedTailIsCutOnTheDiskBeforeAnythingIsAppendedSoLaterLinesAreNeverHidden() = runTest {
+        runWorkoutAndDie()
+        val lines = store.files.getValue("w1")
+        lines[lines.lastIndex] = lines.last().dropLast(7) // the last write was cut
+        val damagedCopy = lines.toList()
+        val e2 = engine()
+        assertEquals(NativeRestoreStatus.TAIL_REPAIRED, e2.restore("w1").restoreStatus)
+        assertEquals(damagedCopy, store.originals["w1"], "the damaged original is kept for diagnosis")
+        e2.resume("w1")
+        e2.submitCounter("w1", foot, 1, 500.0, 0)
+        clock += 3000
+        e2.submitCounter("w1", foot, 1, 510.0, 0)
+        val again = engine().restore("w1")
+        assertEquals(NativeRestoreStatus.INTACT, again.restoreStatus, "nothing is hidden behind a damaged line any more")
+        assertEquals(e2.snapshot().distanceMeters, again.distanceMeters, 1e-9)
+    }
+
+    @Test
+    fun aDamagedMiddleIsCutToItsGoodPrefixAndTheOriginalIsKept() = runTest {
+        runWorkoutAndDie()
+        val lines = store.files.getValue("w1")
+        lines[3] = lines[3].replace("|", "#")
+        val original = lines.toList()
+        assertEquals(NativeRestoreStatus.PARTIAL, engine().restore("w1").restoreStatus)
+        assertEquals(original, store.originals["w1"])
+        assertEquals(NativeRestoreStatus.INTACT, engine().restore("w1").restoreStatus)
+    }
+
+    @Test
+    fun ifTheRepairFailsNothingIsAppendedAndTheWorkoutIsNotDurable() = runTest {
+        runWorkoutAndDie()
+        val lines = store.files.getValue("w1")
+        lines[lines.lastIndex] = lines.last().dropLast(7)
+        store.failReplace = true
+        val before = lines.size
+        val snap = engine().restore("w1")
+        assertTrue(snap.journalFailed)
+        assertTrue(snap.error!!.startsWith("JOURNAL_REPAIR_FAILED"))
+        assertEquals(before, store.files.getValue("w1").size, "no recovery line behind the damage")
+        assertEquals(NativeWorkoutState.PAUSED, snap.state)
     }
 
     @Test
@@ -288,6 +340,11 @@ class WorkoutEngineTest {
         assertEquals(listOf("one", "two", "three"), s.read("a/b c"))
         s.setActive("a/b c")
         assertEquals("a/b c", s.activeSessionId())
+        val kept = s.replaceKeepingOriginal("a/b c", listOf("one", "two"))
+        assertEquals(listOf("one", "two"), s.read("a/b c"))
+        assertEquals(listOf("one", "two", "three"), File(dir, kept).readText().split('\n').filter { it.isNotBlank() })
+        s.append("a/b c", listOf("four"))
+        assertEquals(listOf("one", "two", "four"), s.read("a/b c"))
         s.clear("a/b c")
         assertEquals(emptyList(), s.read("a/b c"))
         assertNull(s.activeSessionId())

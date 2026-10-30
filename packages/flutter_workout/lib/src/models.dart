@@ -69,6 +69,7 @@ class WorkoutSnapshot {
     this.sessionId,
     this.mode,
     this.distanceSource,
+    this.lastDistanceSource,
     this.error,
   });
 
@@ -83,6 +84,7 @@ class WorkoutSnapshot {
       sessionId = null,
       mode = null,
       distanceSource = null,
+      lastDistanceSource = null,
       error = null;
 
   final String? sessionId;
@@ -95,7 +97,12 @@ class WorkoutSnapshot {
 
   /// The workout distance, from ONE source at a time. 0 while no source is chosen: never a guess.
   final double distanceMeters;
+
+  /// The source that is counting NOW: null when none is chosen yet or the chosen one went quiet (the distance so far is kept).
   final DistanceSourceRef? distanceSource;
+
+  /// The source that credited last, even if it went quiet: a history, not a promise that it is counting.
+  final DistanceSourceRef? lastDistanceSource;
 
   /// Sequence number of the last journal event.
   final int lastSeq;

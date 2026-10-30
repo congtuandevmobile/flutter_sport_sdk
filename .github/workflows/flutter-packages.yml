@@ -22,6 +22,11 @@ jobs:
         run: |
           flutter analyze
           flutter test
+      - name: flutter_challenge
+        working-directory: packages/flutter_challenge
+        run: |
+          flutter analyze
+          flutter test
       - name: flutter_tracking_gps
         working-directory: packages/flutter_tracking_gps
         run: |

@@ -16,6 +16,7 @@ class FakeHost extends WorkoutHostApi {
     pausedMs: 5000,
     distanceMeters: 123.5,
     distanceSource: NativeSourceRef(id: 'footpod', kind: NativeSourceKind.counter),
+    lastDistanceSource: NativeSourceRef(id: 'footpod', kind: NativeSourceKind.counter),
     lastSeq: 9,
     journalFailed: false,
     restoreStatus: NativeRestoreStatus.tailRepaired,
@@ -98,6 +99,7 @@ void main() {
     expect(s.pausedTime, const Duration(seconds: 5));
     expect(s.distanceMeters, 123.5);
     expect(s.distanceSource, const DistanceSourceRef.counter('footpod'));
+    expect(s.lastDistanceSource, const DistanceSourceRef.counter('footpod'));
     expect(s.lastSeq, 9);
     expect(s.restoreStatus, RestoreStatus.tailRepaired);
     expect(s.isDurable, isTrue);

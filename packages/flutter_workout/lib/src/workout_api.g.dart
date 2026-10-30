@@ -200,6 +200,7 @@ class NativeWorkoutSnapshot {
     required this.pausedMs,
     required this.distanceMeters,
     this.distanceSource,
+    this.lastDistanceSource,
     required this.lastSeq,
     required this.journalFailed,
     required this.restoreStatus,
@@ -221,8 +222,11 @@ class NativeWorkoutSnapshot {
   /// The workout distance. 0 while no source is chosen: never a guess.
   double distanceMeters;
 
-  /// Where the distance comes from now.
+  /// The source that is counting NOW: null when none is chosen yet or the chosen one went quiet (the distance so far is kept).
   NativeSourceRef? distanceSource;
+
+  /// The source that credited last, even if it went quiet: a history, not a promise that it is counting.
+  NativeSourceRef? lastDistanceSource;
 
   /// Sequence number of the last journal event.
   int lastSeq;
@@ -245,6 +249,7 @@ class NativeWorkoutSnapshot {
       pausedMs,
       distanceMeters,
       distanceSource,
+      lastDistanceSource,
       lastSeq,
       journalFailed,
       restoreStatus,
@@ -266,11 +271,12 @@ class NativeWorkoutSnapshot {
       pausedMs: result[4]! as int,
       distanceMeters: result[5]! as double,
       distanceSource: result[6] as NativeSourceRef?,
-      lastSeq: result[7]! as int,
-      journalFailed: result[8]! as bool,
-      restoreStatus: result[9]! as NativeRestoreStatus,
-      updatedAtMs: result[10]! as int,
-      error: result[11] as String?,
+      lastDistanceSource: result[7] as NativeSourceRef?,
+      lastSeq: result[8]! as int,
+      journalFailed: result[9]! as bool,
+      restoreStatus: result[10]! as NativeRestoreStatus,
+      updatedAtMs: result[11]! as int,
+      error: result[12] as String?,
     );
   }
 
@@ -283,7 +289,7 @@ class NativeWorkoutSnapshot {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(sessionId, other.sessionId) && _deepEquals(state, other.state) && _deepEquals(mode, other.mode) && _deepEquals(activeMs, other.activeMs) && _deepEquals(pausedMs, other.pausedMs) && _deepEquals(distanceMeters, other.distanceMeters) && _deepEquals(distanceSource, other.distanceSource) && _deepEquals(lastSeq, other.lastSeq) && _deepEquals(journalFailed, other.journalFailed) && _deepEquals(restoreStatus, other.restoreStatus) && _deepEquals(updatedAtMs, other.updatedAtMs) && _deepEquals(error, other.error);
+    return _deepEquals(sessionId, other.sessionId) && _deepEquals(state, other.state) && _deepEquals(mode, other.mode) && _deepEquals(activeMs, other.activeMs) && _deepEquals(pausedMs, other.pausedMs) && _deepEquals(distanceMeters, other.distanceMeters) && _deepEquals(distanceSource, other.distanceSource) && _deepEquals(lastDistanceSource, other.lastDistanceSource) && _deepEquals(lastSeq, other.lastSeq) && _deepEquals(journalFailed, other.journalFailed) && _deepEquals(restoreStatus, other.restoreStatus) && _deepEquals(updatedAtMs, other.updatedAtMs) && _deepEquals(error, other.error);
   }
 
   @override
@@ -360,7 +366,8 @@ class WorkoutHostApi {
 
   final String pigeonVar_messageChannelSuffix;
 
-  /// Starts a workout. Fails with SESSION_OPEN when another one is running or paused.
+  /// Starts a workout. Fails with SESSION_OPEN when another one is running or paused. Every command below runs on the engine's own
+  /// serial thread (the journal is written and synced there, never on the main thread) and answers after the write.
   Future<NativeWorkoutSnapshot> start(String sessionId, NativeWorkoutMode mode) async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.flutter_workout.WorkoutHostApi.start$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
@@ -518,7 +525,8 @@ class WorkoutHostApi {
 
   /// Rebuilds the session of [sessionId] from its journal after the process died. It comes back PAUSED (a session that was
   /// running); the time the process was dead is not activity and no distance is invented. If the engine already runs this
-  /// session, nothing is replayed.
+  /// session, nothing is replayed. A damaged journal is repaired ON DISK first (the damaged original is kept next to it for
+  /// diagnosis), so what is appended afterwards is never hidden behind the damage.
   Future<NativeWorkoutSnapshot> restore(String sessionId) async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.flutter_workout.WorkoutHostApi.restore$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(

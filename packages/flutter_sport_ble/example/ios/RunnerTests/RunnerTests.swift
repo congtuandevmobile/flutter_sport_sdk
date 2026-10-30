@@ -373,6 +373,24 @@ final class RunnerTests: XCTestCase {
         XCTAssertEqual(d?.recentRrMs, [1000, 500])
     }
 
+    func testTheSnapshotKeepsEachDevicesOwnCounterEvenThoughOnlyOneIsResolved() {
+        let e = makeEngine()
+        link(e, "foot", ["1814"])
+        link(e, "rower", ["1826"], subscribed: ["2ad1"])
+        for t: Int64 in [0, 1000] {
+            clock = t
+            e.onNotification(id: "foot", characteristicShortId: "2a53", bytes: Data([0x02, 0x00, 0x01, 100, 0x98, 0x3A, 0x00, 0x00]))
+            e.onNotification(id: "rower", characteristicShortId: "2ad1", bytes: Data([0x04, 0x00, 56, 120, 0, 0x52, 0x03, 0x00]))
+            e.flush()
+        }
+        let s = e.snapshot()
+        XCTAssertEqual(s.metrics.filter { $0.metric == .totalDistance }.count, 1)
+        let byDevice = Dictionary(uniqueKeysWithValues: s.deviceValues.filter { $0.metric == .totalDistance }.map { ($0.deviceId, $0) })
+        XCTAssertEqual(byDevice["foot"]?.value ?? 0, 1500, accuracy: 1e-9)
+        XCTAssertEqual(byDevice["rower"]?.value ?? 0, 850, accuracy: 1e-9)
+        XCTAssertEqual(byDevice["foot"]?.epoch, 1)
+    }
+
     func testTheWheelCircumferenceTurnsWheelRevolutionsIntoSpeed() {
         let e = makeEngine()
         link(e, "wheel", ["1816"])

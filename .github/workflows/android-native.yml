@@ -1,9 +1,9 @@
 name: android-native
 on:
   push:
-    paths: ['shared/sensor-core/**', 'packages/**/android/**', 'packages/flutter_tracking_gps/tracking-core/**', '.github/workflows/android-native.yml']
+    paths: ['packages/**/*-core/**', 'packages/**/android/**', '.github/workflows/android-native.yml']
   pull_request:
-    paths: ['shared/sensor-core/**', 'packages/**/android/**', 'packages/flutter_tracking_gps/tracking-core/**', '.github/workflows/android-native.yml']
+    paths: ['packages/**/*-core/**', 'packages/**/android/**', '.github/workflows/android-native.yml']
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
@@ -14,12 +14,20 @@ jobs:
       - uses: subosito/flutter-action@v2
         with: { channel: stable }
       - run: flutter pub get
+      # gradlew and the wrapper jar are git-ignored in a Flutter example: `flutter build apk --config-only` creates them.
       - name: flutter_sport_ble (Android unit tests)
-        working-directory: packages/flutter_sport_ble/example/android
-        run: ./gradlew --no-daemon :flutter_sport_ble:testDebugUnitTest
+        run: |
+          (cd packages/flutter_sport_ble/example && flutter build apk --config-only)
+          cd packages/flutter_sport_ble/example/android && ./gradlew --no-daemon :flutter_sport_ble:testDebugUnitTest
       - name: flutter_workout (Android unit tests)
-        working-directory: packages/flutter_workout/example/android
-        run: ./gradlew --no-daemon :flutter_workout:testDebugUnitTest
+        run: |
+          (cd packages/flutter_workout/example && flutter build apk --config-only)
+          cd packages/flutter_workout/example/android && ./gradlew --no-daemon :flutter_workout:testDebugUnitTest
+      - name: flutter_challenge (Android unit tests)
+        run: |
+          (cd packages/flutter_challenge/example && flutter build apk --config-only)
+          cd packages/flutter_challenge/example/android && ./gradlew --no-daemon :flutter_challenge:testDebugUnitTest
       - name: flutter_tracking_gps (Android unit tests)
-        working-directory: packages/flutter_tracking_gps/example/android
-        run: ./gradlew --no-daemon :flutter_tracking_gps:testDebugUnitTest
+        run: |
+          (cd packages/flutter_tracking_gps/example && flutter build apk --config-only)
+          cd packages/flutter_tracking_gps/example/android && ./gradlew --no-daemon :flutter_tracking_gps:testDebugUnitTest

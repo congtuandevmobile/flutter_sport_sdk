@@ -1,0 +1,29 @@
+name: flutter_challenge
+description: "A multi-stage challenge for Flutter: ordered stages with their own goal, source and completion rule, progress that counts only what belongs to the stage, and a durable journal that survives the process dying."
+version: 0.0.1-beta
+repository: https://github.com/congtuandevmobile/flutter_sport_sdk
+resolution: workspace
+
+environment:
+  sdk: ^3.10.7
+  flutter: '>=3.3.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  meta: ^1.17.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  pigeon: ^26.1.7
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: io.github.congtuandevmobile.flutter_challenge
+        pluginClass: FlutterChallengePlugin
+      ios:
+        pluginClass: FlutterChallengePlugin

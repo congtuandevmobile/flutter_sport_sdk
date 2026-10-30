@@ -36,6 +36,10 @@ class FakeHost extends SportBleHostApi {
 
 NativeSensorSnapshot _native() => NativeSensorSnapshot(
   updatedAtMs: 1234,
+  deviceValues: [
+    NativeDeviceMetric(deviceId: 'foot', epoch: 1, metric: NativeMetric.totalDistance, value: 4000.5, kind: NativeKind.cumulative, ageMs: 900),
+    NativeDeviceMetric(deviceId: 'rower', epoch: 4, metric: NativeMetric.totalDistance, value: 850, kind: NativeKind.cumulative, ageMs: 100),
+  ],
   metrics: [
     NativeResolvedMetric(metric: NativeMetric.heartRate, value: 145, sourceId: 'strap', kind: NativeKind.instantaneous, ageMs: 200),
     NativeResolvedMetric(metric: NativeMetric.runningCadence, value: 0, sourceId: 'foot', kind: NativeKind.instantaneous, ageMs: 900),
@@ -108,6 +112,12 @@ void main() {
     expect(s[SportMetric.heartRate]!.sourceId, 'strap');
     expect(s[SportMetric.heartRate]!.age, const Duration(milliseconds: 200));
     expect(s.updatedAtMs, 1234);
+    // the resolved value keeps ONE source, the per-device values keep each device's own counter
+    expect(s.valueOf('foot', SportMetric.totalDistance)!.value, 4000.5);
+    expect(s.valueOf('rower', SportMetric.totalDistance)!.value, 850);
+    expect(s.valueOf('rower', SportMetric.totalDistance)!.epoch, 4);
+    expect(s.valueOf('rower', SportMetric.totalDistance)!.age, const Duration(milliseconds: 100));
+    expect(s.valueOf('rower', SportMetric.heartRate), isNull);
     expect(s.readyDevices.map((d) => d.id), ['strap']);
     final strap = s.devices.firstWhere((d) => d.id == 'strap');
     expect(strap.batteryPercent, 82);

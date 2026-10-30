@@ -1,9 +1,9 @@
 name: ios-native
 on:
   push:
-    paths: ['shared/sensor-core/**', 'packages/**/ios/**', 'packages/flutter_tracking_gps/tracking-core/**', '.github/workflows/ios-native.yml']
+    paths: ['packages/**/*-core/**', 'packages/**/ios/**', '.github/workflows/ios-native.yml']
   pull_request:
-    paths: ['shared/sensor-core/**', 'packages/**/ios/**', 'packages/flutter_tracking_gps/tracking-core/**', '.github/workflows/ios-native.yml']
+    paths: ['packages/**/*-core/**', 'packages/**/ios/**', '.github/workflows/ios-native.yml']
 jobs:
   xctest:
     # The XCFrameworks are not committed: they are built here before the iOS tests.
@@ -22,7 +22,7 @@ jobs:
         run: |
           pod install
           xcodebuild test -workspace Runner.xcworkspace -scheme Runner \
-            -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:RunnerTests
+            -destination "id=$(../../../../tool/ios_simulator_id.sh)" -only-testing:RunnerTests
       - name: Build WorkoutCore.xcframework
         run: packages/flutter_workout/tool/build_core.sh debug
       - name: flutter_workout (XCTest)
@@ -30,4 +30,12 @@ jobs:
         run: |
           pod install
           xcodebuild test -workspace Runner.xcworkspace -scheme Runner \
-            -destination 'platform=iOS Simulator,name=iPhone 16 Pro' -only-testing:RunnerTests
+            -destination "id=$(../../../../tool/ios_simulator_id.sh)" -only-testing:RunnerTests
+      - name: Build ChallengeCore.xcframework
+        run: packages/flutter_challenge/tool/build_core.sh debug
+      - name: flutter_challenge (XCTest)
+        working-directory: packages/flutter_challenge/example/ios
+        run: |
+          pod install
+          xcodebuild test -workspace Runner.xcworkspace -scheme Runner \
+            -destination "id=$(../../../../tool/ios_simulator_id.sh)" -only-testing:RunnerTests

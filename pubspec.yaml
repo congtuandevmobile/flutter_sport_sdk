@@ -9,4 +9,5 @@ workspace:
   - packages/flutter_tracking_gps
   - packages/flutter_sport_ble
   - packages/flutter_workout
+  - packages/flutter_challenge
   - examples/sensors_demo

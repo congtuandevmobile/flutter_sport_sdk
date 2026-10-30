@@ -325,7 +325,12 @@ final class SportBleEngine: BleTransportListener {
                 manufacturer: details.manufacturer, model: details.model, firmware: details.firmware,
                 batteryPercent: details.batteryPercent.map { Int64(truncating: $0) })
         }
-        return NativeSensorSnapshot(metrics: metrics, devices: states, updatedAtMs: now)
+        let deviceValues: [NativeDeviceMetric] = hub.deviceValues(nowMs: now).map { v in
+            NativeDeviceMetric(
+                deviceId: v.sourceId, epoch: v.epoch, metric: NativeMetric(rawValue: Int(v.metric.ordinal)) ?? .heartRate,
+                value: v.value, kind: v.kind == .cumulative ? .cumulative : .instantaneous, ageMs: v.ageMs)
+        }
+        return NativeSensorSnapshot(metrics: metrics, deviceValues: deviceValues, devices: states, updatedAtMs: now)
     }
 
     private func capabilities(_ serviceShortIds: [String]) -> [NativeCapability] {

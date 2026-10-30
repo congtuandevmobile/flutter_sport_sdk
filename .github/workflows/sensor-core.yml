@@ -1,9 +1,9 @@
-name: sensor-core
+name: kotlin-cores
 on:
   push:
-    paths: ['shared/**', '.github/workflows/sensor-core.yml']
+    paths: ['packages/**/*-core/**', '.github/workflows/sensor-core.yml']
   pull_request:
-    paths: ['shared/**', '.github/workflows/sensor-core.yml']
+    paths: ['packages/**/*-core/**', '.github/workflows/sensor-core.yml']
 jobs:
   jvm-tests:
     runs-on: ubuntu-latest
@@ -12,8 +12,11 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
       - name: Core tests (Kotlin)
-        working-directory: shared/sensor-core
+        working-directory: packages/flutter_sport_ble/sensor-core
         run: ./gradlew --no-daemon jvmTest
       - name: Workout core tests (Kotlin)
-        working-directory: shared/workout-core
+        working-directory: packages/flutter_workout/workout-core
+        run: ./gradlew --no-daemon jvmTest
+      - name: Challenge core tests (Kotlin)
+        working-directory: packages/flutter_challenge/challenge-core
         run: ./gradlew --no-daemon jvmTest

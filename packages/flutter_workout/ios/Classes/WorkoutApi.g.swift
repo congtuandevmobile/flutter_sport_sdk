@@ -263,8 +263,10 @@ struct NativeWorkoutSnapshot: Hashable {
   var pausedMs: Int64
   /// The workout distance. 0 while no source is chosen: never a guess.
   var distanceMeters: Double
-  /// Where the distance comes from now.
+  /// The source that is counting NOW: null when none is chosen yet or the chosen one went quiet (the distance so far is kept).
   var distanceSource: NativeSourceRef? = nil
+  /// The source that credited last, even if it went quiet: a history, not a promise that it is counting.
+  var lastDistanceSource: NativeSourceRef? = nil
   /// Sequence number of the last journal event.
   var lastSeq: Int64
   /// A journal write FAILED. Sticky: what this snapshot shows is NOT guaranteed to survive the process dying.
@@ -283,11 +285,12 @@ struct NativeWorkoutSnapshot: Hashable {
     let pausedMs = pigeonVar_list[4] as! Int64
     let distanceMeters = pigeonVar_list[5] as! Double
     let distanceSource: NativeSourceRef? = nilOrValue(pigeonVar_list[6])
-    let lastSeq = pigeonVar_list[7] as! Int64
-    let journalFailed = pigeonVar_list[8] as! Bool
-    let restoreStatus = pigeonVar_list[9] as! NativeRestoreStatus
-    let updatedAtMs = pigeonVar_list[10] as! Int64
-    let error: String? = nilOrValue(pigeonVar_list[11])
+    let lastDistanceSource: NativeSourceRef? = nilOrValue(pigeonVar_list[7])
+    let lastSeq = pigeonVar_list[8] as! Int64
+    let journalFailed = pigeonVar_list[9] as! Bool
+    let restoreStatus = pigeonVar_list[10] as! NativeRestoreStatus
+    let updatedAtMs = pigeonVar_list[11] as! Int64
+    let error: String? = nilOrValue(pigeonVar_list[12])
 
     return NativeWorkoutSnapshot(
       sessionId: sessionId,
@@ -297,6 +300,7 @@ struct NativeWorkoutSnapshot: Hashable {
       pausedMs: pausedMs,
       distanceMeters: distanceMeters,
       distanceSource: distanceSource,
+      lastDistanceSource: lastDistanceSource,
       lastSeq: lastSeq,
       journalFailed: journalFailed,
       restoreStatus: restoreStatus,
@@ -313,6 +317,7 @@ struct NativeWorkoutSnapshot: Hashable {
       pausedMs,
       distanceMeters,
       distanceSource,
+      lastDistanceSource,
       lastSeq,
       journalFailed,
       restoreStatus,
@@ -324,7 +329,7 @@ struct NativeWorkoutSnapshot: Hashable {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return deepEqualsWorkoutApi(lhs.sessionId, rhs.sessionId) && deepEqualsWorkoutApi(lhs.state, rhs.state) && deepEqualsWorkoutApi(lhs.mode, rhs.mode) && deepEqualsWorkoutApi(lhs.activeMs, rhs.activeMs) && deepEqualsWorkoutApi(lhs.pausedMs, rhs.pausedMs) && deepEqualsWorkoutApi(lhs.distanceMeters, rhs.distanceMeters) && deepEqualsWorkoutApi(lhs.distanceSource, rhs.distanceSource) && deepEqualsWorkoutApi(lhs.lastSeq, rhs.lastSeq) && deepEqualsWorkoutApi(lhs.journalFailed, rhs.journalFailed) && deepEqualsWorkoutApi(lhs.restoreStatus, rhs.restoreStatus) && deepEqualsWorkoutApi(lhs.updatedAtMs, rhs.updatedAtMs) && deepEqualsWorkoutApi(lhs.error, rhs.error)
+    return deepEqualsWorkoutApi(lhs.sessionId, rhs.sessionId) && deepEqualsWorkoutApi(lhs.state, rhs.state) && deepEqualsWorkoutApi(lhs.mode, rhs.mode) && deepEqualsWorkoutApi(lhs.activeMs, rhs.activeMs) && deepEqualsWorkoutApi(lhs.pausedMs, rhs.pausedMs) && deepEqualsWorkoutApi(lhs.distanceMeters, rhs.distanceMeters) && deepEqualsWorkoutApi(lhs.distanceSource, rhs.distanceSource) && deepEqualsWorkoutApi(lhs.lastDistanceSource, rhs.lastDistanceSource) && deepEqualsWorkoutApi(lhs.lastSeq, rhs.lastSeq) && deepEqualsWorkoutApi(lhs.journalFailed, rhs.journalFailed) && deepEqualsWorkoutApi(lhs.restoreStatus, rhs.restoreStatus) && deepEqualsWorkoutApi(lhs.updatedAtMs, rhs.updatedAtMs) && deepEqualsWorkoutApi(lhs.error, rhs.error)
   }
 
   func hash(into hasher: inout Hasher) {
@@ -336,6 +341,7 @@ struct NativeWorkoutSnapshot: Hashable {
     deepHashWorkoutApi(value: pausedMs, hasher: &hasher)
     deepHashWorkoutApi(value: distanceMeters, hasher: &hasher)
     deepHashWorkoutApi(value: distanceSource, hasher: &hasher)
+    deepHashWorkoutApi(value: lastDistanceSource, hasher: &hasher)
     deepHashWorkoutApi(value: lastSeq, hasher: &hasher)
     deepHashWorkoutApi(value: journalFailed, hasher: &hasher)
     deepHashWorkoutApi(value: restoreStatus, hasher: &hasher)
@@ -421,14 +427,16 @@ class WorkoutApiPigeonCodec: FlutterStandardMessageCodec, @unchecked Sendable {
   static let shared = WorkoutApiPigeonCodec(readerWriter: WorkoutApiPigeonCodecReaderWriter())
 }
 
+
 /// Generated protocol from Pigeon that represents a handler of messages from Flutter.
 protocol WorkoutHostApi {
-  /// Starts a workout. Fails with SESSION_OPEN when another one is running or paused.
-  func start(sessionId: String, mode: NativeWorkoutMode) throws -> NativeWorkoutSnapshot
-  func pause(sessionId: String) throws -> NativeWorkoutSnapshot
-  func resume(sessionId: String) throws -> NativeWorkoutSnapshot
+  /// Starts a workout. Fails with SESSION_OPEN when another one is running or paused. Every command below runs on the engine's own
+  /// serial thread (the journal is written and synced there, never on the main thread) and answers after the write.
+  func start(sessionId: String, mode: NativeWorkoutMode, completion: @escaping (Result<NativeWorkoutSnapshot, Error>) -> Void)
+  func pause(sessionId: String, completion: @escaping (Result<NativeWorkoutSnapshot, Error>) -> Void)
+  func resume(sessionId: String, completion: @escaping (Result<NativeWorkoutSnapshot, Error>) -> Void)
   /// Ends the workout. The journal stays until [clearSession].
-  func finish(sessionId: String) throws -> NativeWorkoutSnapshot
+  func finish(sessionId: String, completion: @escaping (Result<NativeWorkoutSnapshot, Error>) -> Void)
   /// A cumulative distance (a GPS total, a footpod, a treadmill). [ageMs] is how old the value already is, so the sample is
   /// stamped with its real time, not with the time of this call. [epoch] grows with every new connection of the source.
   /// Dropped when it is not for the open session.
@@ -436,16 +444,17 @@ protocol WorkoutHostApi {
   /// A speed in metres per second, integrated over time while the workout runs.
   func submitSpeed(sessionId: String, source: NativeSourceRef, epoch: Int64, mps: Double, ageMs: Int64) throws
   /// The user's choice of distance source (null clears it). Only used while that source is fresh.
-  func setPreferredSource(sessionId: String, source: NativeSourceRef?) throws
-  func snapshot() throws -> NativeWorkoutSnapshot
+  func setPreferredSource(sessionId: String, source: NativeSourceRef?, completion: @escaping (Result<Void, Error>) -> Void)
+  func snapshot(completion: @escaping (Result<NativeWorkoutSnapshot, Error>) -> Void)
   /// Rebuilds the session of [sessionId] from its journal after the process died. It comes back PAUSED (a session that was
   /// running); the time the process was dead is not activity and no distance is invented. If the engine already runs this
-  /// session, nothing is replayed.
-  func restore(sessionId: String) throws -> NativeWorkoutSnapshot
+  /// session, nothing is replayed. A damaged journal is repaired ON DISK first (the damaged original is kept next to it for
+  /// diagnosis), so what is appended afterwards is never hidden behind the damage.
+  func restore(sessionId: String, completion: @escaping (Result<NativeWorkoutSnapshot, Error>) -> Void)
   /// The id of the workout that was running or paused when it was last seen, or null.
-  func activeSessionId() throws -> String?
+  func activeSessionId(completion: @escaping (Result<String?, Error>) -> Void)
   /// Deletes the journal of [sessionId].
-  func clearSession(sessionId: String) throws
+  func clearSession(sessionId: String, completion: @escaping (Result<Void, Error>) -> Void)
 }
 
 /// Generated setup class from Pigeon to handle messages through the `binaryMessenger`.
@@ -454,18 +463,21 @@ class WorkoutHostApiSetup {
   /// Sets up an instance of `WorkoutHostApi` to handle messages through the `binaryMessenger`.
   static func setUp(binaryMessenger: FlutterBinaryMessenger, api: WorkoutHostApi?, messageChannelSuffix: String = "") {
     let channelSuffix = messageChannelSuffix.count > 0 ? ".\(messageChannelSuffix)" : ""
-    /// Starts a workout. Fails with SESSION_OPEN when another one is running or paused.
+    /// Starts a workout. Fails with SESSION_OPEN when another one is running or paused. Every command below runs on the engine's own
+    /// serial thread (the journal is written and synced there, never on the main thread) and answers after the write.
     let startChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.flutter_workout.WorkoutHostApi.start\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
     if let api = api {
       startChannel.setMessageHandler { message, reply in
         let args = message as! [Any?]
         let sessionIdArg = args[0] as! String
         let modeArg = args[1] as! NativeWorkoutMode
-        do {
-          let result = try api.start(sessionId: sessionIdArg, mode: modeArg)
-          reply(wrapResult(result))
-        } catch {
-          reply(wrapError(error))
+        api.start(sessionId: sessionIdArg, mode: modeArg) { result in
+          switch result {
+          case .success(let res):
+            reply(wrapResult(res))
+          case .failure(let error):
+            reply(wrapError(error))
+          }
         }
       }
     } else {
@@ -476,11 +488,13 @@ class WorkoutHostApiSetup {
       pauseChannel.setMessageHandler { message, reply in
         let args = message as! [Any?]
         let sessionIdArg = args[0] as! String
-        do {
-          let result = try api.pause(sessionId: sessionIdArg)
-          reply(wrapResult(result))
-        } catch {
-          reply(wrapError(error))
+        api.pause(sessionId: sessionIdArg) { result in
+          switch result {
+          case .success(let res):
+            reply(wrapResult(res))
+          case .failure(let error):
+            reply(wrapError(error))
+          }
         }
       }
     } else {
@@ -491,11 +505,13 @@ class WorkoutHostApiSetup {
       resumeChannel.setMessageHandler { message, reply in
         let args = message as! [Any?]
         let sessionIdArg = args[0] as! String
-        do {
-          let result = try api.resume(sessionId: sessionIdArg)
-          reply(wrapResult(result))
-        } catch {
-          reply(wrapError(error))
+        api.resume(sessionId: sessionIdArg) { result in
+          switch result {
+          case .success(let res):
+            reply(wrapResult(res))
+          case .failure(let error):
+            reply(wrapError(error))
+          }
         }
       }
     } else {
@@ -507,11 +523,13 @@ class WorkoutHostApiSetup {
       finishChannel.setMessageHandler { message, reply in
         let args = message as! [Any?]
         let sessionIdArg = args[0] as! String
-        do {
-          let result = try api.finish(sessionId: sessionIdArg)
-          reply(wrapResult(result))
-        } catch {
-          reply(wrapError(error))
+        api.finish(sessionId: sessionIdArg) { result in
+          switch result {
+          case .success(let res):
+            reply(wrapResult(res))
+          case .failure(let error):
+            reply(wrapError(error))
+          }
         }
       }
     } else {
@@ -566,11 +584,13 @@ class WorkoutHostApiSetup {
         let args = message as! [Any?]
         let sessionIdArg = args[0] as! String
         let sourceArg: NativeSourceRef? = nilOrValue(args[1])
-        do {
-          try api.setPreferredSource(sessionId: sessionIdArg, source: sourceArg)
-          reply(wrapResult(nil))
-        } catch {
-          reply(wrapError(error))
+        api.setPreferredSource(sessionId: sessionIdArg, source: sourceArg) { result in
+          switch result {
+          case .success:
+            reply(wrapResult(nil))
+          case .failure(let error):
+            reply(wrapError(error))
+          }
         }
       }
     } else {
@@ -579,11 +599,13 @@ class WorkoutHostApiSetup {
     let snapshotChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.flutter_workout.WorkoutHostApi.snapshot\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
     if let api = api {
       snapshotChannel.setMessageHandler { _, reply in
-        do {
-          let result = try api.snapshot()
-          reply(wrapResult(result))
-        } catch {
-          reply(wrapError(error))
+        api.snapshot { result in
+          switch result {
+          case .success(let res):
+            reply(wrapResult(res))
+          case .failure(let error):
+            reply(wrapError(error))
+          }
         }
       }
     } else {
@@ -591,17 +613,20 @@ class WorkoutHostApiSetup {
     }
     /// Rebuilds the session of [sessionId] from its journal after the process died. It comes back PAUSED (a session that was
     /// running); the time the process was dead is not activity and no distance is invented. If the engine already runs this
-    /// session, nothing is replayed.
+    /// session, nothing is replayed. A damaged journal is repaired ON DISK first (the damaged original is kept next to it for
+    /// diagnosis), so what is appended afterwards is never hidden behind the damage.
     let restoreChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.flutter_workout.WorkoutHostApi.restore\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
     if let api = api {
       restoreChannel.setMessageHandler { message, reply in
         let args = message as! [Any?]
         let sessionIdArg = args[0] as! String
-        do {
-          let result = try api.restore(sessionId: sessionIdArg)
-          reply(wrapResult(result))
-        } catch {
-          reply(wrapError(error))
+        api.restore(sessionId: sessionIdArg) { result in
+          switch result {
+          case .success(let res):
+            reply(wrapResult(res))
+          case .failure(let error):
+            reply(wrapError(error))
+          }
         }
       }
     } else {
@@ -611,11 +636,13 @@ class WorkoutHostApiSetup {
     let activeSessionIdChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.flutter_workout.WorkoutHostApi.activeSessionId\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
     if let api = api {
       activeSessionIdChannel.setMessageHandler { _, reply in
-        do {
-          let result = try api.activeSessionId()
-          reply(wrapResult(result))
-        } catch {
-          reply(wrapError(error))
+        api.activeSessionId { result in
+          switch result {
+          case .success(let res):
+            reply(wrapResult(res))
+          case .failure(let error):
+            reply(wrapError(error))
+          }
         }
       }
     } else {
@@ -627,11 +654,13 @@ class WorkoutHostApiSetup {
       clearSessionChannel.setMessageHandler { message, reply in
         let args = message as! [Any?]
         let sessionIdArg = args[0] as! String
-        do {
-          try api.clearSession(sessionId: sessionIdArg)
-          reply(wrapResult(nil))
-        } catch {
-          reply(wrapError(error))
+        api.clearSession(sessionId: sessionIdArg) { result in
+          switch result {
+          case .success:
+            reply(wrapResult(nil))
+          case .failure(let error):
+            reply(wrapError(error))
+          }
         }
       }
     } else {

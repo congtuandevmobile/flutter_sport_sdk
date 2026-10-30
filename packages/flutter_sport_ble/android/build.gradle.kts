@@ -42,8 +42,8 @@ android {
 
     sourceSets {
         getByName("main") {
-            // The shared sensor core is plain common Kotlin: compiled straight into this plugin.
-            java.srcDirs("src/main/kotlin", "../../../shared/sensor-core/src/commonMain/kotlin")
+            // The core is plain common Kotlin: compiled straight into this plugin.
+            java.srcDirs("src/main/kotlin", "../sensor-core/src/commonMain/kotlin")
         }
         getByName("test") {
             java.srcDirs("src/test/kotlin")

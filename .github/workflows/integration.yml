@@ -1,9 +1,9 @@
 name: integration
 on:
   push:
-    paths: ['packages/**', 'shared/**', 'examples/**', 'tool/**', '.github/workflows/integration.yml']
+    paths: ['packages/**', 'examples/**', 'tool/**', '.github/workflows/integration.yml']
   pull_request:
-    paths: ['packages/**', 'shared/**', 'examples/**', 'tool/**', '.github/workflows/integration.yml']
+    paths: ['packages/**', 'examples/**', 'tool/**', '.github/workflows/integration.yml']
 jobs:
   android-both-plugins:
     # One app with both plugins: builds, and the merged manifest keeps the GPS permission (see tool/check_merged_manifest.sh).

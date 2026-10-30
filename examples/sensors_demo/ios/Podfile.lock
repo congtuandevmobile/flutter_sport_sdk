@@ -25,10 +25,10 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
-  flutter_sport_ble: 60bae6bd95ff961638b83d8fdbf055fa8415d7c7
-  flutter_tracking_gps: 3a3a3f4e553bab5ee8345ccb9d590e6ab84826ec
-  flutter_workout: d8ff78c3b50f8b785c3cefe0aaa5b2ee8188ae4f
+  flutter_sport_ble: 1e7aac7fe36f318da26aef7c83d856798297a8d3
+  flutter_tracking_gps: 00ea05c1156645d5055f2f65b98a02901a45c99e
+  flutter_workout: 8345fc91166a57583ecb9a910f4b7bd24aab00a9
 
-PODFILE CHECKSUM: e30f02f9d1c72c47bb6344a0a748c9d268180865
+PODFILE CHECKSUM: 53a6aebc29ccee84c41f92f409fc20cd4ca011f1
 
 COCOAPODS: 1.16.2

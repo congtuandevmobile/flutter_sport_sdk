@@ -475,10 +475,75 @@ data class NativeResolvedMetric (
   }
 }
 
+/**
+ * The latest value of one metric of ONE device, before any source is chosen.
+ *
+ * Generated class from Pigeon that represents data sent in messages.
+ */
+data class NativeDeviceMetric (
+  val deviceId: String,
+  /** The connection number of the device this value belongs to. */
+  val epoch: Long,
+  val metric: NativeMetric,
+  val value: Double,
+  val kind: NativeKind,
+  /** How old the value is on this phone's clock (the consumer decides what is fresh). */
+  val ageMs: Long
+)
+ {
+  companion object {
+    fun fromList(pigeonVar_list: List<Any?>): NativeDeviceMetric {
+      val deviceId = pigeonVar_list[0] as String
+      val epoch = pigeonVar_list[1] as Long
+      val metric = pigeonVar_list[2] as NativeMetric
+      val value = pigeonVar_list[3] as Double
+      val kind = pigeonVar_list[4] as NativeKind
+      val ageMs = pigeonVar_list[5] as Long
+      return NativeDeviceMetric(deviceId, epoch, metric, value, kind, ageMs)
+    }
+  }
+  fun toList(): List<Any?> {
+    return listOf(
+      deviceId,
+      epoch,
+      metric,
+      value,
+      kind,
+      ageMs,
+    )
+  }
+  override fun equals(other: Any?): Boolean {
+    if (other == null || other.javaClass != javaClass) {
+      return false
+    }
+    if (this === other) {
+      return true
+    }
+    val other = other as NativeDeviceMetric
+    return SportBleApiPigeonUtils.deepEquals(this.deviceId, other.deviceId) && SportBleApiPigeonUtils.deepEquals(this.epoch, other.epoch) && SportBleApiPigeonUtils.deepEquals(this.metric, other.metric) && SportBleApiPigeonUtils.deepEquals(this.value, other.value) && SportBleApiPigeonUtils.deepEquals(this.kind, other.kind) && SportBleApiPigeonUtils.deepEquals(this.ageMs, other.ageMs)
+  }
+
+  override fun hashCode(): Int {
+    var result = javaClass.hashCode()
+    result = 31 * result + SportBleApiPigeonUtils.deepHash(this.deviceId)
+    result = 31 * result + SportBleApiPigeonUtils.deepHash(this.epoch)
+    result = 31 * result + SportBleApiPigeonUtils.deepHash(this.metric)
+    result = 31 * result + SportBleApiPigeonUtils.deepHash(this.value)
+    result = 31 * result + SportBleApiPigeonUtils.deepHash(this.kind)
+    result = 31 * result + SportBleApiPigeonUtils.deepHash(this.ageMs)
+    return result
+  }
+}
+
 /** Generated class from Pigeon that represents data sent in messages. */
 data class NativeSensorSnapshot (
   /** One entry per metric that has a healthy source; a metric without one is absent (unknown), never 0. */
   val metrics: List<NativeResolvedMetric>,
+  /**
+   * What EACH connected device says, nothing chosen: a caller that needs a specific device's counter (a rower's distance next to a
+   * footpod's) reads it here, because [metrics] keeps one source per metric.
+   */
+  val deviceValues: List<NativeDeviceMetric>,
   val devices: List<NativeDeviceState>,
   val updatedAtMs: Long
 )
@@ -486,14 +551,16 @@ data class NativeSensorSnapshot (
   companion object {
     fun fromList(pigeonVar_list: List<Any?>): NativeSensorSnapshot {
       val metrics = pigeonVar_list[0] as List<NativeResolvedMetric>
-      val devices = pigeonVar_list[1] as List<NativeDeviceState>
-      val updatedAtMs = pigeonVar_list[2] as Long
-      return NativeSensorSnapshot(metrics, devices, updatedAtMs)
+      val deviceValues = pigeonVar_list[1] as List<NativeDeviceMetric>
+      val devices = pigeonVar_list[2] as List<NativeDeviceState>
+      val updatedAtMs = pigeonVar_list[3] as Long
+      return NativeSensorSnapshot(metrics, deviceValues, devices, updatedAtMs)
     }
   }
   fun toList(): List<Any?> {
     return listOf(
       metrics,
+      deviceValues,
       devices,
       updatedAtMs,
     )
@@ -506,12 +573,13 @@ data class NativeSensorSnapshot (
       return true
     }
     val other = other as NativeSensorSnapshot
-    return SportBleApiPigeonUtils.deepEquals(this.metrics, other.metrics) && SportBleApiPigeonUtils.deepEquals(this.devices, other.devices) && SportBleApiPigeonUtils.deepEquals(this.updatedAtMs, other.updatedAtMs)
+    return SportBleApiPigeonUtils.deepEquals(this.metrics, other.metrics) && SportBleApiPigeonUtils.deepEquals(this.deviceValues, other.deviceValues) && SportBleApiPigeonUtils.deepEquals(this.devices, other.devices) && SportBleApiPigeonUtils.deepEquals(this.updatedAtMs, other.updatedAtMs)
   }
 
   override fun hashCode(): Int {
     var result = javaClass.hashCode()
     result = 31 * result + SportBleApiPigeonUtils.deepHash(this.metrics)
+    result = 31 * result + SportBleApiPigeonUtils.deepHash(this.deviceValues)
     result = 31 * result + SportBleApiPigeonUtils.deepHash(this.devices)
     result = 31 * result + SportBleApiPigeonUtils.deepHash(this.updatedAtMs)
     return result
@@ -618,10 +686,15 @@ private open class SportBleApiPigeonCodec : StandardMessageCodec() {
       }
       137.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
-          NativeSensorSnapshot.fromList(it)
+          NativeDeviceMetric.fromList(it)
         }
       }
       138.toByte() -> {
+        return (readValue(buffer) as? List<Any?>)?.let {
+          NativeSensorSnapshot.fromList(it)
+        }
+      }
+      139.toByte() -> {
         return (readValue(buffer) as? List<Any?>)?.let {
           NativeRawPacket.fromList(it)
         }
@@ -663,12 +736,16 @@ private open class SportBleApiPigeonCodec : StandardMessageCodec() {
         stream.write(136)
         writeValue(stream, value.toList())
       }
-      is NativeSensorSnapshot -> {
+      is NativeDeviceMetric -> {
         stream.write(137)
         writeValue(stream, value.toList())
       }
-      is NativeRawPacket -> {
+      is NativeSensorSnapshot -> {
         stream.write(138)
+        writeValue(stream, value.toList())
+      }
+      is NativeRawPacket -> {
+        stream.write(139)
         writeValue(stream, value.toList())
       }
       else -> super.writeValue(stream, value)

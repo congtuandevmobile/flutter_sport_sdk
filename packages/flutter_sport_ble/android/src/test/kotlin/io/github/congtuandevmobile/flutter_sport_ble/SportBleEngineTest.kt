@@ -395,6 +395,24 @@ class SportBleEngineTest {
     }
 
     @Test
+    fun theSnapshotKeepsEachDevicesOwnCounterEvenThoughOnlyOneIsResolved() = runTest {
+        val e = engine()
+        e.link("foot", listOf("1814"))
+        e.link("rower", listOf("1826"), subscribed = listOf("2ad1"))
+        for (t in listOf(0L, 1000L)) {
+            clock = t
+            e.onNotification("foot", "2a53", b(0x02, 0x00, 0x01, 100, 0x98, 0x3A, 0x00, 0x00)) // total distance 1500.0 m
+            e.onNotification("rower", "2ad1", b(0x04, 0x00, 56, 120, 0, 0x52, 0x03, 0x00)) // 850 m
+        }
+        val s = e.snapshot()
+        assertEquals(1, s.metrics.count { it.metric == NativeMetric.TOTAL_DISTANCE })
+        val byDevice = s.deviceValues.filter { it.metric == NativeMetric.TOTAL_DISTANCE }.associateBy { it.deviceId }
+        assertEquals(1500.0, byDevice.getValue("foot").value, 1e-9)
+        assertEquals(850.0, byDevice.getValue("rower").value, 1e-9)
+        assertEquals(1L, byDevice.getValue("foot").epoch)
+    }
+
+    @Test
     fun theWheelCircumferenceTurnsWheelRevolutionsIntoSpeed() = runTest {
         val e = engine()
         e.link("wheel", listOf("1816"))

@@ -188,15 +188,53 @@ class SensorValue {
   final Duration age;
 }
 
+/// The latest value of one metric of ONE device, before any source is chosen. [epoch] is the connection number of the device and
+/// [age] how old the value is: the consumer decides what is fresh. A caller that needs a specific device's counter (a rower's distance
+/// next to a footpod's) reads it here, because [SensorSnapshot.values] keeps one source per metric.
+@immutable
+class DeviceValue {
+  const DeviceValue({
+    required this.deviceId,
+    required this.epoch,
+    required this.metric,
+    required this.value,
+    required this.kind,
+    required this.age,
+  });
+
+  final String deviceId;
+  final int epoch;
+  final SportMetric metric;
+  final double value;
+  final MetricKind kind;
+  final Duration age;
+}
+
 /// What the connected sensors say now: ONE value per metric that has a healthy source. A metric without one is absent
 /// (null here), never 0.
 @immutable
 class SensorSnapshot {
-  const SensorSnapshot({required this.values, required this.devices, required this.updatedAtMs});
+  const SensorSnapshot({
+    required this.values,
+    required this.devices,
+    required this.updatedAtMs,
+    this.deviceValues = const [],
+  });
 
-  const SensorSnapshot.empty() : values = const {}, devices = const [], updatedAtMs = 0;
+  const SensorSnapshot.empty() : values = const {}, devices = const [], updatedAtMs = 0, deviceValues = const [];
 
   final Map<SportMetric, SensorValue> values;
+
+  /// What EACH connected device says, nothing chosen (see [DeviceValue]).
+  final List<DeviceValue> deviceValues;
+
+  /// The latest [metric] of ONE device, or null when it has none.
+  DeviceValue? valueOf(String deviceId, SportMetric metric) {
+    for (final v in deviceValues) {
+      if (v.deviceId == deviceId && v.metric == metric) return v;
+    }
+    return null;
+  }
   final List<DeviceState> devices;
 
   /// The phone's monotonic clock (milliseconds) when the snapshot was made.

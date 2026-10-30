@@ -1,0 +1,16 @@
+# Replaces .gitignore for packaging: ios/Frameworks (the prebuilt core, built by tool/build_core.sh release) MUST ship,
+# because a consumer has no Gradle/Kotlin build for iOS. Build outputs and local files must not.
+.dart_tool/
+.gradle/
+.kotlin/
+build/
+local.properties
+*.log
+.DS_Store
+example/build/
+example/ios/Pods/
+example/ios/.symlinks/
+example/ios/Flutter/ephemeral/
+example/android/.gradle/
+example/android/local.properties
+**/gradlew.bat.bak

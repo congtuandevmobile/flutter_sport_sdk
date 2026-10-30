@@ -14,6 +14,14 @@ private final class MemoryStore: WorkoutJournalStore {
     }
     func read(sessionId: String) throws -> [String] { files[sessionId] ?? [] }
     func clear(sessionId: String) throws { files[sessionId] = nil; if activeId == sessionId { activeId = nil } }
+    var failReplace = false
+    var originals: [String: [String]] = [:]
+    func replaceKeepingOriginal(sessionId: String, lines: [String]) throws -> String {
+        if failReplace { throw NSError(domain: "test", code: 2, userInfo: [NSLocalizedDescriptionKey: "read-only"]) }
+        originals[sessionId] = files[sessionId] ?? []
+        files[sessionId] = lines
+        return "kept"
+    }
     func activeSessionId() -> String? { activeId }
     func setActive(_ sessionId: String?) throws { activeId = sessionId }
     var totalLines: Int { files.values.reduce(0) { $0 + $1.count } }
@@ -149,7 +157,8 @@ final class RunnerTests: XCTestCase {
         XCTAssertEqual(snap.distanceMeters, distance, accuracy: 1e-9)
         XCTAssertEqual(snap.restoreStatus, .intact)
         XCTAssertEqual(snap.activeMs, 40_000, "the hour the process was dead is not activity")
-        XCTAssertEqual(snap.distanceSource?.kind, .counter)
+        XCTAssertNil(snap.distanceSource, "nothing is counting until a sensor speaks again")
+        XCTAssertEqual(snap.lastDistanceSource?.kind, .counter)
         _ = try e2.resume(sessionId: "w1")
         counter(e2, 1000)
         clock += 3000; counter(e2, 1010)
@@ -188,6 +197,47 @@ final class RunnerTests: XCTestCase {
         XCTAssertEqual(try makeEngine().restore(sessionId: "w1").restoreStatus, .tailRepaired)
         store.files["w1"]![3] = store.files["w1"]![3].replacingOccurrences(of: "|", with: "#")
         XCTAssertEqual(try makeEngine().restore(sessionId: "w1").restoreStatus, .partial)
+    }
+
+    func testADamagedTailIsCutOnTheDiskBeforeAnythingIsAppendedSoLaterLinesAreNeverHidden() throws {
+        _ = try runWorkoutAndDie()
+        var lines = store.files["w1"]!
+        lines[lines.count - 1] = String(lines.last!.dropLast(7))
+        store.files["w1"] = lines
+        let damaged = lines
+        let e2 = makeEngine()
+        XCTAssertEqual(try e2.restore(sessionId: "w1").restoreStatus, .tailRepaired)
+        XCTAssertEqual(store.originals["w1"], damaged, "the damaged original is kept for diagnosis")
+        _ = try e2.resume(sessionId: "w1")
+        counter(e2, 500)
+        clock += 3000; counter(e2, 510)
+        let again = try makeEngine().restore(sessionId: "w1")
+        XCTAssertEqual(again.restoreStatus, .intact, "nothing is hidden behind a damaged line any more")
+        XCTAssertEqual(again.distanceMeters, e2.snapshot().distanceMeters, accuracy: 1e-9)
+    }
+
+    func testADamagedMiddleIsCutToItsGoodPrefix() throws {
+        _ = try runWorkoutAndDie()
+        store.files["w1"]![3] = store.files["w1"]![3].replacingOccurrences(of: "|", with: "#")
+        XCTAssertEqual(try makeEngine().restore(sessionId: "w1").restoreStatus, .partial)
+        XCTAssertEqual(try makeEngine().restore(sessionId: "w1").restoreStatus, .intact)
+    }
+
+    func testIfTheRepairFailsNothingIsAppendedAndTheWorkoutIsNotDurable() throws {
+        let local = MemoryStore()
+        let e = WorkoutEngine(store: local, sink: RecordingSink(local), monotonicMs: { self.clock })
+        _ = try e.start(sessionId: "w3", mode: .indoorRunning)
+        counter(e, 0, id: "w3")
+        var lines = local.files["w3"]!
+        lines[lines.count - 1] = String(lines.last!.dropLast(7))
+        local.files["w3"] = lines
+        local.failReplace = true
+        let before = lines.count
+        let snap = try WorkoutEngine(store: local, sink: RecordingSink(local), monotonicMs: { self.clock }).restore(sessionId: "w3")
+        XCTAssertTrue(snap.journalFailed)
+        XCTAssertEqual(snap.error?.hasPrefix("JOURNAL_REPAIR_FAILED"), true)
+        XCTAssertEqual(local.files["w3"]?.count, before, "no recovery line behind the damage")
+        XCTAssertEqual(snap.state, .paused)
     }
 
     func testAnUnknownOrEmptyJournalIsNotRestorable() {
@@ -247,6 +297,11 @@ final class RunnerTests: XCTestCase {
         XCTAssertEqual(try s.read(sessionId: "a/b c"), ["one", "two", "three"])
         try s.setActive("a/b c")
         XCTAssertEqual(s.activeSessionId(), "a/b c")
+        let kept = try s.replaceKeepingOriginal(sessionId: "a/b c", lines: ["one", "two"])
+        XCTAssertEqual(try s.read(sessionId: "a/b c"), ["one", "two"])
+        XCTAssertEqual(try String(contentsOf: dir.appendingPathComponent(kept), encoding: .utf8).split(separator: "\n").count, 3)
+        try s.append(sessionId: "a/b c", lines: ["four"])
+        XCTAssertEqual(try s.read(sessionId: "a/b c"), ["one", "two", "four"])
         try s.clear(sessionId: "a/b c")
         XCTAssertEqual(try s.read(sessionId: "a/b c"), [])
         XCTAssertNil(s.activeSessionId())

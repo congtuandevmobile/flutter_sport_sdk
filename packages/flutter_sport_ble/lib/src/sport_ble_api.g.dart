@@ -394,15 +394,88 @@ class NativeResolvedMetric {
   int get hashCode => _deepHash(<Object?>[runtimeType, ..._toList()]);
 }
 
+/// The latest value of one metric of ONE device, before any source is chosen.
+class NativeDeviceMetric {
+  NativeDeviceMetric({
+    required this.deviceId,
+    required this.epoch,
+    required this.metric,
+    required this.value,
+    required this.kind,
+    required this.ageMs,
+  });
+
+  String deviceId;
+
+  /// The connection number of the device this value belongs to.
+  int epoch;
+
+  NativeMetric metric;
+
+  double value;
+
+  NativeKind kind;
+
+  /// How old the value is on this phone's clock (the consumer decides what is fresh).
+  int ageMs;
+
+  List<Object?> _toList() {
+    return <Object?>[
+      deviceId,
+      epoch,
+      metric,
+      value,
+      kind,
+      ageMs,
+    ];
+  }
+
+  Object encode() {
+    return _toList();  }
+
+  static NativeDeviceMetric decode(Object result) {
+    result as List<Object?>;
+    return NativeDeviceMetric(
+      deviceId: result[0]! as String,
+      epoch: result[1]! as int,
+      metric: result[2]! as NativeMetric,
+      value: result[3]! as double,
+      kind: result[4]! as NativeKind,
+      ageMs: result[5]! as int,
+    );
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  bool operator ==(Object other) {
+    if (other is! NativeDeviceMetric || other.runtimeType != runtimeType) {
+      return false;
+    }
+    if (identical(this, other)) {
+      return true;
+    }
+    return _deepEquals(deviceId, other.deviceId) && _deepEquals(epoch, other.epoch) && _deepEquals(metric, other.metric) && _deepEquals(value, other.value) && _deepEquals(kind, other.kind) && _deepEquals(ageMs, other.ageMs);
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  int get hashCode => _deepHash(<Object?>[runtimeType, ..._toList()]);
+}
+
 class NativeSensorSnapshot {
   NativeSensorSnapshot({
     required this.metrics,
+    required this.deviceValues,
     required this.devices,
     required this.updatedAtMs,
   });
 
   /// One entry per metric that has a healthy source; a metric without one is absent (unknown), never 0.
   List<NativeResolvedMetric> metrics;
+
+  /// What EACH connected device says, nothing chosen: a caller that needs a specific device's counter (a rower's distance next to a
+  /// footpod's) reads it here, because [metrics] keeps one source per metric.
+  List<NativeDeviceMetric> deviceValues;
 
   List<NativeDeviceState> devices;
 
@@ -411,6 +484,7 @@ class NativeSensorSnapshot {
   List<Object?> _toList() {
     return <Object?>[
       metrics,
+      deviceValues,
       devices,
       updatedAtMs,
     ];
@@ -423,8 +497,9 @@ class NativeSensorSnapshot {
     result as List<Object?>;
     return NativeSensorSnapshot(
       metrics: (result[0]! as List<Object?>).cast<NativeResolvedMetric>(),
-      devices: (result[1]! as List<Object?>).cast<NativeDeviceState>(),
-      updatedAtMs: result[2]! as int,
+      deviceValues: (result[1]! as List<Object?>).cast<NativeDeviceMetric>(),
+      devices: (result[2]! as List<Object?>).cast<NativeDeviceState>(),
+      updatedAtMs: result[3]! as int,
     );
   }
 
@@ -437,7 +512,7 @@ class NativeSensorSnapshot {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(metrics, other.metrics) && _deepEquals(devices, other.devices) && _deepEquals(updatedAtMs, other.updatedAtMs);
+    return _deepEquals(metrics, other.metrics) && _deepEquals(deviceValues, other.deviceValues) && _deepEquals(devices, other.devices) && _deepEquals(updatedAtMs, other.updatedAtMs);
   }
 
   @override
@@ -540,11 +615,14 @@ class _PigeonCodec extends StandardMessageCodec {
     }    else if (value is NativeResolvedMetric) {
       buffer.putUint8(136);
       writeValue(buffer, value.encode());
-    }    else if (value is NativeSensorSnapshot) {
+    }    else if (value is NativeDeviceMetric) {
       buffer.putUint8(137);
       writeValue(buffer, value.encode());
-    }    else if (value is NativeRawPacket) {
+    }    else if (value is NativeSensorSnapshot) {
       buffer.putUint8(138);
+      writeValue(buffer, value.encode());
+    }    else if (value is NativeRawPacket) {
+      buffer.putUint8(139);
       writeValue(buffer, value.encode());
     } else {
       super.writeValue(buffer, value);
@@ -576,8 +654,10 @@ class _PigeonCodec extends StandardMessageCodec {
       case 136:
         return NativeResolvedMetric.decode(readValue(buffer)!);
       case 137:
-        return NativeSensorSnapshot.decode(readValue(buffer)!);
+        return NativeDeviceMetric.decode(readValue(buffer)!);
       case 138:
+        return NativeSensorSnapshot.decode(readValue(buffer)!);
+      case 139:
         return NativeRawPacket.decode(readValue(buffer)!);
       default:
         return super.readValueOfType(type, buffer);

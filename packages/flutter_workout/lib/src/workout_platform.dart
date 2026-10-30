@@ -81,6 +81,9 @@ class PigeonWorkoutPlatform implements WorkoutPlatform, WorkoutFlutterApi {
   @override
   Future<void> clearSession(String sessionId) => _guard(() => _api.clearSession(sessionId));
 
+  static DistanceSourceRef? _source(NativeSourceRef? s) =>
+      s == null ? null : DistanceSourceRef(s.id, DistanceSourceKind.values[s.kind.index]);
+
   static NativeSourceRef _ref(DistanceSourceRef s) =>
       NativeSourceRef(id: s.id, kind: NativeSourceKind.values[s.kind.index]);
 
@@ -91,9 +94,8 @@ class PigeonWorkoutPlatform implements WorkoutPlatform, WorkoutFlutterApi {
     activeTime: Duration(milliseconds: s.activeMs),
     pausedTime: Duration(milliseconds: s.pausedMs),
     distanceMeters: s.distanceMeters,
-    distanceSource: s.distanceSource == null
-        ? null
-        : DistanceSourceRef(s.distanceSource!.id, DistanceSourceKind.values[s.distanceSource!.kind.index]),
+    distanceSource: _source(s.distanceSource),
+    lastDistanceSource: _source(s.lastDistanceSource),
     lastSeq: s.lastSeq,
     journalFailed: s.journalFailed,
     restoreStatus: RestoreStatus.values[s.restoreStatus.index],

@@ -306,8 +306,10 @@ data class NativeWorkoutSnapshot (
   val pausedMs: Long,
   /** The workout distance. 0 while no source is chosen: never a guess. */
   val distanceMeters: Double,
-  /** Where the distance comes from now. */
+  /** The source that is counting NOW: null when none is chosen yet or the chosen one went quiet (the distance so far is kept). */
   val distanceSource: NativeSourceRef? = null,
+  /** The source that credited last, even if it went quiet: a history, not a promise that it is counting. */
+  val lastDistanceSource: NativeSourceRef? = null,
   /** Sequence number of the last journal event. */
   val lastSeq: Long,
   /** A journal write FAILED. Sticky: what this snapshot shows is NOT guaranteed to survive the process dying. */
@@ -326,12 +328,13 @@ data class NativeWorkoutSnapshot (
       val pausedMs = pigeonVar_list[4] as Long
       val distanceMeters = pigeonVar_list[5] as Double
       val distanceSource = pigeonVar_list[6] as NativeSourceRef?
-      val lastSeq = pigeonVar_list[7] as Long
-      val journalFailed = pigeonVar_list[8] as Boolean
-      val restoreStatus = pigeonVar_list[9] as NativeRestoreStatus
-      val updatedAtMs = pigeonVar_list[10] as Long
-      val error = pigeonVar_list[11] as String?
-      return NativeWorkoutSnapshot(sessionId, state, mode, activeMs, pausedMs, distanceMeters, distanceSource, lastSeq, journalFailed, restoreStatus, updatedAtMs, error)
+      val lastDistanceSource = pigeonVar_list[7] as NativeSourceRef?
+      val lastSeq = pigeonVar_list[8] as Long
+      val journalFailed = pigeonVar_list[9] as Boolean
+      val restoreStatus = pigeonVar_list[10] as NativeRestoreStatus
+      val updatedAtMs = pigeonVar_list[11] as Long
+      val error = pigeonVar_list[12] as String?
+      return NativeWorkoutSnapshot(sessionId, state, mode, activeMs, pausedMs, distanceMeters, distanceSource, lastDistanceSource, lastSeq, journalFailed, restoreStatus, updatedAtMs, error)
     }
   }
   fun toList(): List<Any?> {
@@ -343,6 +346,7 @@ data class NativeWorkoutSnapshot (
       pausedMs,
       distanceMeters,
       distanceSource,
+      lastDistanceSource,
       lastSeq,
       journalFailed,
       restoreStatus,
@@ -358,7 +362,7 @@ data class NativeWorkoutSnapshot (
       return true
     }
     val other = other as NativeWorkoutSnapshot
-    return WorkoutApiPigeonUtils.deepEquals(this.sessionId, other.sessionId) && WorkoutApiPigeonUtils.deepEquals(this.state, other.state) && WorkoutApiPigeonUtils.deepEquals(this.mode, other.mode) && WorkoutApiPigeonUtils.deepEquals(this.activeMs, other.activeMs) && WorkoutApiPigeonUtils.deepEquals(this.pausedMs, other.pausedMs) && WorkoutApiPigeonUtils.deepEquals(this.distanceMeters, other.distanceMeters) && WorkoutApiPigeonUtils.deepEquals(this.distanceSource, other.distanceSource) && WorkoutApiPigeonUtils.deepEquals(this.lastSeq, other.lastSeq) && WorkoutApiPigeonUtils.deepEquals(this.journalFailed, other.journalFailed) && WorkoutApiPigeonUtils.deepEquals(this.restoreStatus, other.restoreStatus) && WorkoutApiPigeonUtils.deepEquals(this.updatedAtMs, other.updatedAtMs) && WorkoutApiPigeonUtils.deepEquals(this.error, other.error)
+    return WorkoutApiPigeonUtils.deepEquals(this.sessionId, other.sessionId) && WorkoutApiPigeonUtils.deepEquals(this.state, other.state) && WorkoutApiPigeonUtils.deepEquals(this.mode, other.mode) && WorkoutApiPigeonUtils.deepEquals(this.activeMs, other.activeMs) && WorkoutApiPigeonUtils.deepEquals(this.pausedMs, other.pausedMs) && WorkoutApiPigeonUtils.deepEquals(this.distanceMeters, other.distanceMeters) && WorkoutApiPigeonUtils.deepEquals(this.distanceSource, other.distanceSource) && WorkoutApiPigeonUtils.deepEquals(this.lastDistanceSource, other.lastDistanceSource) && WorkoutApiPigeonUtils.deepEquals(this.lastSeq, other.lastSeq) && WorkoutApiPigeonUtils.deepEquals(this.journalFailed, other.journalFailed) && WorkoutApiPigeonUtils.deepEquals(this.restoreStatus, other.restoreStatus) && WorkoutApiPigeonUtils.deepEquals(this.updatedAtMs, other.updatedAtMs) && WorkoutApiPigeonUtils.deepEquals(this.error, other.error)
   }
 
   override fun hashCode(): Int {
@@ -370,6 +374,7 @@ data class NativeWorkoutSnapshot (
     result = 31 * result + WorkoutApiPigeonUtils.deepHash(this.pausedMs)
     result = 31 * result + WorkoutApiPigeonUtils.deepHash(this.distanceMeters)
     result = 31 * result + WorkoutApiPigeonUtils.deepHash(this.distanceSource)
+    result = 31 * result + WorkoutApiPigeonUtils.deepHash(this.lastDistanceSource)
     result = 31 * result + WorkoutApiPigeonUtils.deepHash(this.lastSeq)
     result = 31 * result + WorkoutApiPigeonUtils.deepHash(this.journalFailed)
     result = 31 * result + WorkoutApiPigeonUtils.deepHash(this.restoreStatus)
@@ -445,14 +450,18 @@ private open class WorkoutApiPigeonCodec : StandardMessageCodec() {
   }
 }
 
+
 /** Generated interface from Pigeon that represents a handler of messages from Flutter. */
 interface WorkoutHostApi {
-  /** Starts a workout. Fails with SESSION_OPEN when another one is running or paused. */
-  fun start(sessionId: String, mode: NativeWorkoutMode): NativeWorkoutSnapshot
-  fun pause(sessionId: String): NativeWorkoutSnapshot
-  fun resume(sessionId: String): NativeWorkoutSnapshot
+  /**
+   * Starts a workout. Fails with SESSION_OPEN when another one is running or paused. Every command below runs on the engine's own
+   * serial thread (the journal is written and synced there, never on the main thread) and answers after the write.
+   */
+  fun start(sessionId: String, mode: NativeWorkoutMode, callback: (Result<NativeWorkoutSnapshot>) -> Unit)
+  fun pause(sessionId: String, callback: (Result<NativeWorkoutSnapshot>) -> Unit)
+  fun resume(sessionId: String, callback: (Result<NativeWorkoutSnapshot>) -> Unit)
   /** Ends the workout. The journal stays until [clearSession]. */
-  fun finish(sessionId: String): NativeWorkoutSnapshot
+  fun finish(sessionId: String, callback: (Result<NativeWorkoutSnapshot>) -> Unit)
   /**
    * A cumulative distance (a GPS total, a footpod, a treadmill). [ageMs] is how old the value already is, so the sample is
    * stamped with its real time, not with the time of this call. [epoch] grows with every new connection of the source.
@@ -462,18 +471,19 @@ interface WorkoutHostApi {
   /** A speed in metres per second, integrated over time while the workout runs. */
   fun submitSpeed(sessionId: String, source: NativeSourceRef, epoch: Long, mps: Double, ageMs: Long)
   /** The user's choice of distance source (null clears it). Only used while that source is fresh. */
-  fun setPreferredSource(sessionId: String, source: NativeSourceRef?)
-  fun snapshot(): NativeWorkoutSnapshot
+  fun setPreferredSource(sessionId: String, source: NativeSourceRef?, callback: (Result<Unit>) -> Unit)
+  fun snapshot(callback: (Result<NativeWorkoutSnapshot>) -> Unit)
   /**
    * Rebuilds the session of [sessionId] from its journal after the process died. It comes back PAUSED (a session that was
    * running); the time the process was dead is not activity and no distance is invented. If the engine already runs this
-   * session, nothing is replayed.
+   * session, nothing is replayed. A damaged journal is repaired ON DISK first (the damaged original is kept next to it for
+   * diagnosis), so what is appended afterwards is never hidden behind the damage.
    */
-  fun restore(sessionId: String): NativeWorkoutSnapshot
+  fun restore(sessionId: String, callback: (Result<NativeWorkoutSnapshot>) -> Unit)
   /** The id of the workout that was running or paused when it was last seen, or null. */
-  fun activeSessionId(): String?
+  fun activeSessionId(callback: (Result<String?>) -> Unit)
   /** Deletes the journal of [sessionId]. */
-  fun clearSession(sessionId: String)
+  fun clearSession(sessionId: String, callback: (Result<Unit>) -> Unit)
 
   companion object {
     /** The codec used by WorkoutHostApi. */
@@ -491,12 +501,15 @@ interface WorkoutHostApi {
             val args = message as List<Any?>
             val sessionIdArg = args[0] as String
             val modeArg = args[1] as NativeWorkoutMode
-            val wrapped: List<Any?> = try {
-              listOf(api.start(sessionIdArg, modeArg))
-            } catch (exception: Throwable) {
-              WorkoutApiPigeonUtils.wrapError(exception)
+            api.start(sessionIdArg, modeArg) { result: Result<NativeWorkoutSnapshot> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(WorkoutApiPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(WorkoutApiPigeonUtils.wrapResult(data))
+              }
             }
-            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)
@@ -508,12 +521,15 @@ interface WorkoutHostApi {
           channel.setMessageHandler { message, reply ->
             val args = message as List<Any?>
             val sessionIdArg = args[0] as String
-            val wrapped: List<Any?> = try {
-              listOf(api.pause(sessionIdArg))
-            } catch (exception: Throwable) {
-              WorkoutApiPigeonUtils.wrapError(exception)
+            api.pause(sessionIdArg) { result: Result<NativeWorkoutSnapshot> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(WorkoutApiPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(WorkoutApiPigeonUtils.wrapResult(data))
+              }
             }
-            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)
@@ -525,12 +541,15 @@ interface WorkoutHostApi {
           channel.setMessageHandler { message, reply ->
             val args = message as List<Any?>
             val sessionIdArg = args[0] as String
-            val wrapped: List<Any?> = try {
-              listOf(api.resume(sessionIdArg))
-            } catch (exception: Throwable) {
-              WorkoutApiPigeonUtils.wrapError(exception)
+            api.resume(sessionIdArg) { result: Result<NativeWorkoutSnapshot> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(WorkoutApiPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(WorkoutApiPigeonUtils.wrapResult(data))
+              }
             }
-            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)
@@ -542,12 +561,15 @@ interface WorkoutHostApi {
           channel.setMessageHandler { message, reply ->
             val args = message as List<Any?>
             val sessionIdArg = args[0] as String
-            val wrapped: List<Any?> = try {
-              listOf(api.finish(sessionIdArg))
-            } catch (exception: Throwable) {
-              WorkoutApiPigeonUtils.wrapError(exception)
+            api.finish(sessionIdArg) { result: Result<NativeWorkoutSnapshot> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(WorkoutApiPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(WorkoutApiPigeonUtils.wrapResult(data))
+              }
             }
-            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)
@@ -604,13 +626,14 @@ interface WorkoutHostApi {
             val args = message as List<Any?>
             val sessionIdArg = args[0] as String
             val sourceArg = args[1] as NativeSourceRef?
-            val wrapped: List<Any?> = try {
-              api.setPreferredSource(sessionIdArg, sourceArg)
-              listOf(null)
-            } catch (exception: Throwable) {
-              WorkoutApiPigeonUtils.wrapError(exception)
+            api.setPreferredSource(sessionIdArg, sourceArg) { result: Result<Unit> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(WorkoutApiPigeonUtils.wrapError(error))
+              } else {
+                reply.reply(WorkoutApiPigeonUtils.wrapResult(null))
+              }
             }
-            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)
@@ -620,12 +643,15 @@ interface WorkoutHostApi {
         val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.flutter_workout.WorkoutHostApi.snapshot$separatedMessageChannelSuffix", codec)
         if (api != null) {
           channel.setMessageHandler { _, reply ->
-            val wrapped: List<Any?> = try {
-              listOf(api.snapshot())
-            } catch (exception: Throwable) {
-              WorkoutApiPigeonUtils.wrapError(exception)
+            api.snapshot{ result: Result<NativeWorkoutSnapshot> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(WorkoutApiPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(WorkoutApiPigeonUtils.wrapResult(data))
+              }
             }
-            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)
@@ -637,12 +663,15 @@ interface WorkoutHostApi {
           channel.setMessageHandler { message, reply ->
             val args = message as List<Any?>
             val sessionIdArg = args[0] as String
-            val wrapped: List<Any?> = try {
-              listOf(api.restore(sessionIdArg))
-            } catch (exception: Throwable) {
-              WorkoutApiPigeonUtils.wrapError(exception)
+            api.restore(sessionIdArg) { result: Result<NativeWorkoutSnapshot> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(WorkoutApiPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(WorkoutApiPigeonUtils.wrapResult(data))
+              }
             }
-            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)
@@ -652,12 +681,15 @@ interface WorkoutHostApi {
         val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.flutter_workout.WorkoutHostApi.activeSessionId$separatedMessageChannelSuffix", codec)
         if (api != null) {
           channel.setMessageHandler { _, reply ->
-            val wrapped: List<Any?> = try {
-              listOf(api.activeSessionId())
-            } catch (exception: Throwable) {
-              WorkoutApiPigeonUtils.wrapError(exception)
+            api.activeSessionId{ result: Result<String?> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(WorkoutApiPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(WorkoutApiPigeonUtils.wrapResult(data))
+              }
             }
-            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)
@@ -669,13 +701,14 @@ interface WorkoutHostApi {
           channel.setMessageHandler { message, reply ->
             val args = message as List<Any?>
             val sessionIdArg = args[0] as String
-            val wrapped: List<Any?> = try {
-              api.clearSession(sessionIdArg)
-              listOf(null)
-            } catch (exception: Throwable) {
-              WorkoutApiPigeonUtils.wrapError(exception)
+            api.clearSession(sessionIdArg) { result: Result<Unit> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(WorkoutApiPigeonUtils.wrapError(error))
+              } else {
+                reply.reply(WorkoutApiPigeonUtils.wrapResult(null))
+              }
             }
-            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)

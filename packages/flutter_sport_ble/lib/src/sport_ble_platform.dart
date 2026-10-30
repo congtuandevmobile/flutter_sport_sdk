@@ -129,6 +129,17 @@ class PigeonSportBlePlatform implements SportBlePlatform, SportBleFlutterApi {
           age: Duration(milliseconds: m.ageMs),
         ),
     },
+    deviceValues: [
+      for (final v in s.deviceValues)
+        DeviceValue(
+          deviceId: v.deviceId,
+          epoch: v.epoch,
+          metric: SportMetric.values[v.metric.index],
+          value: v.value,
+          kind: v.kind == NativeKind.cumulative ? MetricKind.cumulative : MetricKind.instantaneous,
+          age: Duration(milliseconds: v.ageMs),
+        ),
+    ],
     devices: [
       for (final d in s.devices)
         DeviceState(

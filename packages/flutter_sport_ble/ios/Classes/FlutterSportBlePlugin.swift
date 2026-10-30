@@ -59,7 +59,7 @@ public final class FlutterSportBlePlugin: NSObject, FlutterPlugin, SportBleHostA
         engine?.setWheelCircumference(deviceId: deviceId, metres: metres)
     }
     func snapshot() throws -> NativeSensorSnapshot {
-        engine?.snapshot() ?? NativeSensorSnapshot(metrics: [], devices: [], updatedAtMs: 0)
+        engine?.snapshot() ?? NativeSensorSnapshot(metrics: [], deviceValues: [], devices: [], updatedAtMs: 0)
     }
 
     // MARK: - SportBleSink (called from the engine queue; Flutter wants the main thread)

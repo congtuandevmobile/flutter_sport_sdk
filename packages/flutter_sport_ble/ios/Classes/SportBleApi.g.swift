@@ -438,10 +438,73 @@ struct NativeResolvedMetric: Hashable {
   }
 }
 
+/// The latest value of one metric of ONE device, before any source is chosen.
+///
+/// Generated class from Pigeon that represents data sent in messages.
+struct NativeDeviceMetric: Hashable {
+  var deviceId: String
+  /// The connection number of the device this value belongs to.
+  var epoch: Int64
+  var metric: NativeMetric
+  var value: Double
+  var kind: NativeKind
+  /// How old the value is on this phone's clock (the consumer decides what is fresh).
+  var ageMs: Int64
+
+
+  // swift-format-ignore: AlwaysUseLowerCamelCase
+  static func fromList(_ pigeonVar_list: [Any?]) -> NativeDeviceMetric? {
+    let deviceId = pigeonVar_list[0] as! String
+    let epoch = pigeonVar_list[1] as! Int64
+    let metric = pigeonVar_list[2] as! NativeMetric
+    let value = pigeonVar_list[3] as! Double
+    let kind = pigeonVar_list[4] as! NativeKind
+    let ageMs = pigeonVar_list[5] as! Int64
+
+    return NativeDeviceMetric(
+      deviceId: deviceId,
+      epoch: epoch,
+      metric: metric,
+      value: value,
+      kind: kind,
+      ageMs: ageMs
+    )
+  }
+  func toList() -> [Any?] {
+    return [
+      deviceId,
+      epoch,
+      metric,
+      value,
+      kind,
+      ageMs,
+    ]
+  }
+  static func == (lhs: NativeDeviceMetric, rhs: NativeDeviceMetric) -> Bool {
+    if Swift.type(of: lhs) != Swift.type(of: rhs) {
+      return false
+    }
+    return deepEqualsSportBleApi(lhs.deviceId, rhs.deviceId) && deepEqualsSportBleApi(lhs.epoch, rhs.epoch) && deepEqualsSportBleApi(lhs.metric, rhs.metric) && deepEqualsSportBleApi(lhs.value, rhs.value) && deepEqualsSportBleApi(lhs.kind, rhs.kind) && deepEqualsSportBleApi(lhs.ageMs, rhs.ageMs)
+  }
+
+  func hash(into hasher: inout Hasher) {
+    hasher.combine("NativeDeviceMetric")
+    deepHashSportBleApi(value: deviceId, hasher: &hasher)
+    deepHashSportBleApi(value: epoch, hasher: &hasher)
+    deepHashSportBleApi(value: metric, hasher: &hasher)
+    deepHashSportBleApi(value: value, hasher: &hasher)
+    deepHashSportBleApi(value: kind, hasher: &hasher)
+    deepHashSportBleApi(value: ageMs, hasher: &hasher)
+  }
+}
+
 /// Generated class from Pigeon that represents data sent in messages.
 struct NativeSensorSnapshot: Hashable {
   /// One entry per metric that has a healthy source; a metric without one is absent (unknown), never 0.
   var metrics: [NativeResolvedMetric]
+  /// What EACH connected device says, nothing chosen: a caller that needs a specific device's counter (a rower's distance next to a
+  /// footpod's) reads it here, because [metrics] keeps one source per metric.
+  var deviceValues: [NativeDeviceMetric]
   var devices: [NativeDeviceState]
   var updatedAtMs: Int64
 
@@ -449,11 +512,13 @@ struct NativeSensorSnapshot: Hashable {
   // swift-format-ignore: AlwaysUseLowerCamelCase
   static func fromList(_ pigeonVar_list: [Any?]) -> NativeSensorSnapshot? {
     let metrics = pigeonVar_list[0] as! [NativeResolvedMetric]
-    let devices = pigeonVar_list[1] as! [NativeDeviceState]
-    let updatedAtMs = pigeonVar_list[2] as! Int64
+    let deviceValues = pigeonVar_list[1] as! [NativeDeviceMetric]
+    let devices = pigeonVar_list[2] as! [NativeDeviceState]
+    let updatedAtMs = pigeonVar_list[3] as! Int64
 
     return NativeSensorSnapshot(
       metrics: metrics,
+      deviceValues: deviceValues,
       devices: devices,
       updatedAtMs: updatedAtMs
     )
@@ -461,6 +526,7 @@ struct NativeSensorSnapshot: Hashable {
   func toList() -> [Any?] {
     return [
       metrics,
+      deviceValues,
       devices,
       updatedAtMs,
     ]
@@ -469,12 +535,13 @@ struct NativeSensorSnapshot: Hashable {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return deepEqualsSportBleApi(lhs.metrics, rhs.metrics) && deepEqualsSportBleApi(lhs.devices, rhs.devices) && deepEqualsSportBleApi(lhs.updatedAtMs, rhs.updatedAtMs)
+    return deepEqualsSportBleApi(lhs.metrics, rhs.metrics) && deepEqualsSportBleApi(lhs.deviceValues, rhs.deviceValues) && deepEqualsSportBleApi(lhs.devices, rhs.devices) && deepEqualsSportBleApi(lhs.updatedAtMs, rhs.updatedAtMs)
   }
 
   func hash(into hasher: inout Hasher) {
     hasher.combine("NativeSensorSnapshot")
     deepHashSportBleApi(value: metrics, hasher: &hasher)
+    deepHashSportBleApi(value: deviceValues, hasher: &hasher)
     deepHashSportBleApi(value: devices, hasher: &hasher)
     deepHashSportBleApi(value: updatedAtMs, hasher: &hasher)
   }
@@ -575,8 +642,10 @@ private class SportBleApiPigeonCodecReader: FlutterStandardReader {
     case 136:
       return NativeResolvedMetric.fromList(self.readValue() as! [Any?])
     case 137:
-      return NativeSensorSnapshot.fromList(self.readValue() as! [Any?])
+      return NativeDeviceMetric.fromList(self.readValue() as! [Any?])
     case 138:
+      return NativeSensorSnapshot.fromList(self.readValue() as! [Any?])
+    case 139:
       return NativeRawPacket.fromList(self.readValue() as! [Any?])
     default:
       return super.readValue(ofType: type)
@@ -610,11 +679,14 @@ private class SportBleApiPigeonCodecWriter: FlutterStandardWriter {
     } else if let value = value as? NativeResolvedMetric {
       super.writeByte(136)
       super.writeValue(value.toList())
-    } else if let value = value as? NativeSensorSnapshot {
+    } else if let value = value as? NativeDeviceMetric {
       super.writeByte(137)
       super.writeValue(value.toList())
-    } else if let value = value as? NativeRawPacket {
+    } else if let value = value as? NativeSensorSnapshot {
       super.writeByte(138)
+      super.writeValue(value.toList())
+    } else if let value = value as? NativeRawPacket {
+      super.writeByte(139)
       super.writeValue(value.toList())
     } else {
       super.writeValue(value)
