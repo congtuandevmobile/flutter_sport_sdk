@@ -79,19 +79,27 @@ class RegressionTest {
         assertEquals(true, progress < 200.0)
     }
 
-    @Test fun theSourceListOrderIsThePriority() {
-        val s = ChallengeSession(two, "z")
+    private val three = ChallengeDefinition(
+        "three", 1, listOf(stage("run", ProgressMetric.RUN_METERS, 1000.0, CompletionPolicy.AUTO, "gps", "footpod", "treadmill")),
+    )
+
+    @Test fun whenTheActiveSourceGoesStaleTheFirstFreshSourceOfTheListTakesOverAndItsFirstDeltaCreditsNothing() {
+        val s = ChallengeSession(three, "z")
         s.start(0)
-        s.onCounter("gps", 1, 100.0, 0)
-        s.onCounter("footpod", 1, 500.0, 0)
-        s.pause(100)
-        s.resume(200) // no source is active now: the next fresh one is chosen by the order of allowedSources
-        s.onCounter("footpod", 1, 510.0, 1000) // the lower priority reports first, but the GPS (noted at 0) is fresh
-        s.onCounter("gps", 1, 105.0, 1000)
-        s.onCounter("footpod", 1, 520.0, 2000) // discarded: the GPS has the priority
-        assertEquals(0.0, s.snapshot(2000).stageProgress, 1e-9)
-        s.onCounter("gps", 1, 115.0, 2000)
-        assertEquals(10.0, s.snapshot(2000).stageProgress, 1e-9)
+        s.onCounter("treadmill", 1, 0.0, 0) // the first to report: baseline, then the active source
+        s.onCounter("treadmill", 1, 10.0, 1000)
+        s.onCounter("gps", 1, 100.0, 1000) // tracked, never credited while the treadmill is fresh
+        s.onCounter("footpod", 1, 500.0, 1000)
+        assertEquals(10.0, s.snapshot(1000).stageProgress, 1e-9)
+        s.onCounter("gps", 1, 120.0, 6000)
+        s.onCounter("footpod", 1, 520.0, 6000)
+        s.onCounter("gps", 1, 130.0, 6500) // the treadmill is stale (5.5 s): the GPS has the priority over the footpod and takes over
+        assertEquals(10.0, s.snapshot(6500).stageProgress, 1e-9, "the first delta of the new source is not credited")
+        s.onCounter("footpod", 1, 530.0, 7000) // the GPS is active and fresh: the footpod is discarded
+        s.onCounter("gps", 1, 140.0, 7500)
+        assertEquals(20.0, s.snapshot(7500).stageProgress, 1e-9)
+        s.onCounter("footpod", 1, 540.0, 8000)
+        assertEquals(20.0, s.snapshot(8000).stageProgress, 1e-9)
     }
 
     private val sleds = ChallengeDefinition(

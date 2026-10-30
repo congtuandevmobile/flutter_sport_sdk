@@ -1,4 +1,7 @@
 ## Unreleased
+- Fix (race integrity): event time decides, not arrival time. A measurement made before the stage started or before the last resume is dropped BEFORE it can touch a baseline (`TIME_BACKWARDS`), for counters and for manual deltas: late callbacks can no longer credit what moved while paused.
+- Behaviour change (strict stage boundary): a new stage, and every resume, starts WITHOUT a baseline; the first measurement after it is only a baseline. A counter seen before the activation is never used, so a stage is never credited with distance it cannot prove. The price: the distance before a source's first sample of a stage is not credited.
+- A source that takes over a stage (the active one went stale) credits nothing with its first delta.
 - Fix: a pause or a resume forgets every stage baseline, so what moved while paused is never credited (also for a short pause).
 - Fix: only ONE source advances a stage at a time (the current one while fresh, else the first fresh one in the order of `allowedSources`, which is now the priority); two sensors on the same movement are no longer added together.
 - Fix: `submitDelta(..., stageActivation:)` and `confirm(..., expectedStageActivation:)` (both optional, null = the current stage): a late tap or confirmation made for an older stage is dropped or refused with `STALE_ACTIVATION`.

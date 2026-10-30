@@ -84,15 +84,20 @@ class SessionTest {
         assertEquals(10.0, s.snapshot(107_000).stageProgress, 1e-9)
     }
 
-    @Test fun aStageThatStartsRightAfterASampleKeepsTheDistanceOfTheFirstSecond() {
+    // POLICY (strict, for races): from two totals around the stage boundary there is no way to know how much of the difference was
+    // covered after it, so a counter seen BEFORE the activation is never used. The first sample of the stage is only a baseline: the
+    // distance before it is not credited (an approximation that never gives a stage metres it cannot prove).
+    @Test fun aStageThatStartsRightAfterASampleStillStartsFromItsOwnFirstSample() {
         val s = ChallengeSession(def, "s1")
         s.start(0)
         s.onCounter("gps-primary", 1, 0.0, 0)
         for (i in 1..100) s.onCounter("gps-primary", 1, i * 10.0, i * 1000L)
         s.nextStage(100_500); s.confirm(CompletionEvidence.MANUAL, 100_600); s.nextStage(100_700)
         s.confirm(CompletionEvidence.MANUAL, 100_800); s.nextStage(100_900) // run 2 starts 0.9 s after the last GPS sample
-        s.onCounter("gps-primary", 1, 1010.0, 101_000) // baseline seeded from the sample at 100 s (1000 m)
-        assertEquals(10.0, s.snapshot(101_000).stageProgress, 1e-9, "the first second of the stage is not lost")
+        s.onCounter("gps-primary", 1, 1010.0, 101_000) // the baseline of the stage: the sample at 100 s is NOT used
+        assertEquals(0.0, s.snapshot(101_000).stageProgress, 1e-9, "the distance before the first sample of the stage is not credited")
+        s.onCounter("gps-primary", 1, 1020.0, 102_000)
+        assertEquals(10.0, s.snapshot(102_000).stageProgress, 1e-9)
     }
 
     @Test fun aSourceThatIsNotAllowedForTheStageNeverAdvancesIt() {

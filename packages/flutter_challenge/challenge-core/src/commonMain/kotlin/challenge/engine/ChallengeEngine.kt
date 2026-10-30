@@ -47,6 +47,14 @@ class ChallengeEngine(val definition: ChallengeDefinition, val sessionId: String
     /** The stage activation a sample must carry to count now. */
     fun stageActivation(): Long = activation
 
+    /**
+     * Whether a measurement taken at [atMs] may be looked at now: the challenge is ACTIVE and the measurement is not older than the
+     * stage start, the last resume or the last accepted event. The session asks BEFORE it lets a counter touch a baseline: a stale
+     * measurement that the engine would refuse must not become the baseline of the next one.
+     */
+    fun canIngestMeasurementAt(atMs: Long): Boolean =
+        state == ChallengeState.ACTIVE && stageStatus != StageStatus.COMPLETED && atMs >= stageStartedAt && atMs >= lastEventAt
+
     /** The stage that is active now, or null before the start and after the end. */
     fun currentStageIndex(): Int = index
 
@@ -70,7 +78,11 @@ class ChallengeEngine(val definition: ChallengeDefinition, val sessionId: String
         if (sample.eventId.isBlank()) return ChallengeResult.refused(Refusal.BAD_EVENT_ID)
         if (sample.eventId in seenEventIds) return ChallengeResult.refused(Refusal.DUPLICATE)
         if (!sample.delta.isFinite() || sample.delta <= 0.0) return ChallengeResult.refused(Refusal.BAD_DELTA)
-        if (sample.atMs < stageStartedAt || sample.atMs < lastAcceptedAt) return ChallengeResult.refused(Refusal.TIME_BACKWARDS)
+        // Event time decides, not arrival time: a measurement made before the stage started, before the last resume or before the last
+        // accepted progress belongs to an interval that is over (a pause, the previous stage) and is never credited.
+        if (sample.atMs < stageStartedAt || sample.atMs < lastAcceptedAt || sample.atMs < lastEventAt) {
+            return ChallengeResult.refused(Refusal.TIME_BACKWARDS)
+        }
         if (stageStatus == StageStatus.TARGET_REACHED) return ChallengeResult.refused(Refusal.TARGET_REACHED)
         val applied = minOf(sample.delta, stage.target - progress)
         if (applied <= 0.0) return ChallengeResult.refused(Refusal.TARGET_REACHED)

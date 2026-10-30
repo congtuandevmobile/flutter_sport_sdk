@@ -1,5 +1,7 @@
 ## Unreleased
 
+* Fix (late samples): while RUNNING, a sample measured before the current run started (before the start or the last resume) is dropped by `WorkoutSession`, so a callback that arrives after the resume can neither become a baseline nor credit or integrate what moved while paused (counters and speeds).
+
 * Fix: a counter sample at the SAME instant as the previous one credits nothing (elapsed time 0 let the spike slack credit up to 5 m).
 * Fix: `restore` of another workout while one is running or paused is refused with `SESSION_OPEN`.
 * Fix: `PigeonWorkoutPlatform()` is one shared instance per engine, so a second `FlutterWorkout` no longer silences the first.

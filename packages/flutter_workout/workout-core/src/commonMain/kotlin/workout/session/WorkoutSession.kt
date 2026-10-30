@@ -80,11 +80,18 @@ class WorkoutSession(
 
     /** A cumulative distance (a GPS total, a footpod, a treadmill). [epoch] grows with every new connection of the source. */
     fun onCounter(source: DistanceSource, epoch: Long, meters: Double, atMs: Long): List<WorkoutEvent> =
-        if (!takesSamples()) emptyList() else record(ledger.onCounter(source, epoch, meters, atMs))
+        if (!takesSamples() || measuredBeforeThisRun(atMs)) emptyList() else record(ledger.onCounter(source, epoch, meters, atMs))
 
     /** An instantaneous speed in metres per second, integrated over time while the workout runs. */
     fun onSpeed(source: DistanceSource, epoch: Long, mps: Double, atMs: Long): List<WorkoutEvent> =
-        if (!takesSamples()) emptyList() else record(ledger.onSpeed(source, epoch, mps, atMs))
+        if (!takesSamples() || measuredBeforeThisRun(atMs)) emptyList() else record(ledger.onSpeed(source, epoch, mps, atMs))
+
+    /**
+     * Event time, not arrival time, decides which interval a sample belongs to: while RUNNING, a sample measured before the current run
+     * started (before the start or before the last resume) is dropped, so a callback that arrives late can neither become a baseline
+     * nor credit what moved while paused. While PAUSED samples are only seen (nothing counts), as before.
+     */
+    private fun measuredBeforeThisRun(atMs: Long) = state == WorkoutState.RUNNING && atMs < runningSinceMs
 
     /** The user's choice of distance source (null clears it). */
     fun setPreferredSource(source: DistanceSource?, nowMs: Long): List<WorkoutEvent> =

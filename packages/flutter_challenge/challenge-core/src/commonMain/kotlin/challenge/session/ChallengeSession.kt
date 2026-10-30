@@ -17,9 +17,11 @@ class RestoredSession(val session: ChallengeSession, val recoveryEvents: List<Ch
 /**
  * A [ChallengeEngine] and the feeding of it: it turns the cumulative counters that GPS and machines report into stage-local deltas.
  *
- *  - Counters are noted ALWAYS (whatever the stage), so when a stage starts its baseline is the last fresh value of each allowed
- *    source, and the distance covered between the end of one stage and the start of the next is never credited to the new one.
- *  - A counter advances a stage only if its source is allowed for it; a run counter cannot advance a row stage.
+ *  - Event time decides which interval a measurement belongs to. Only an ACTIVE stage looks at counters, and a measurement made before
+ *    the stage started or before the last resume is dropped (it never becomes a baseline). Every stage, and every resume, starts
+ *    without a baseline: the first measurement after it is a baseline, so neither what moved while paused nor the distance of the
+ *    previous stage is ever credited.
+ *  - A counter advances a stage only if its source is allowed for it, and only ONE allowed source at a time (see [selectActive]).
  *  - A manual delta (reps, a station) carries its own event id from the host, so it is idempotent across restarts.
  *  - The baselines are not durable: after a restore the first sample of each source is a new baseline (a gap is never credited).
  * Not thread-safe: call it through one serialized executor.
@@ -46,18 +48,25 @@ class ChallengeSession private constructor(
     /** A cumulative counter of [sourceId] (a GPS total, a machine's distance). */
     fun onCounter(sourceId: String, epoch: Long, counter: Double, atMs: Long): ChallengeResult {
         if (sourceId.isBlank() || !counter.isFinite() || counter < 0.0 || atMs < 0L) return ChallengeResult.refused(Refusal.BAD_DELTA)
-        val noted = latest[sourceId]
-        if (noted == null || epoch > noted.epoch || (epoch == noted.epoch && atMs >= noted.atMs)) latest[sourceId] = Latest(epoch, counter, atMs)
-        if (engine.currentState != ChallengeState.ACTIVE) return ChallengeResult.NONE
+        if (engine.currentState != ChallengeState.ACTIVE) return ChallengeResult.NONE // nothing is looked at outside a running stage
+        // The fence comes BEFORE any baseline is touched: a measurement made before the stage started or before the last resume (a late
+        // callback) is dropped here, so it can neither become a baseline nor be the first half of a delta.
+        if (!engine.canIngestMeasurementAt(atMs)) return ChallengeResult.refused(Refusal.TIME_BACKWARDS)
         val stage = currentStage() ?: return ChallengeResult.NONE
         if (sourceId !in stage.allowedSources) return ChallengeResult.NONE
+        val noted = latest[sourceId]
+        if (noted == null || epoch > noted.epoch || (epoch == noted.epoch && atMs >= noted.atMs)) latest[sourceId] = Latest(epoch, counter, atMs)
         val adapter = adapters.getOrPut(sourceId) {
             StageCounterAdapter(sessionId, sourceId, stage.metric, maxGapMs = maxGapMs).also { it.activate(engine.stageActivation()) }
         }
         // Every allowed source keeps its own baseline, but only the ACTIVE source credits the stage: two sensors that watch the same
         // movement are never added together.
+        val previousSource = activeSource
         val sample = adapter.onCounter(epoch, counter, atMs)
         if (selectActive(stage, atMs) != sourceId) return ChallengeResult.NONE
+        // The source that takes over credits nothing with its first delta: that delta may reach back to a moment the previous source
+        // already credited. Its next samples count.
+        if (previousSource != null && previousSource != sourceId) return ChallengeResult.NONE
         return after(engine.accept(sample ?: return ChallengeResult.NONE), atMs)
     }
 
@@ -75,7 +84,7 @@ class ChallengeSession private constructor(
 
     private fun isFresh(source: String, nowMs: Long): Boolean {
         val noted = latest[source] ?: return false
-        return nowMs - noted.atMs <= maxGapMs
+        return noted.atMs <= nowMs && nowMs - noted.atMs <= maxGapMs
     }
 
     /** A delta of the current stage's metric from a source that counts for itself (reps, a station): [eventId] must be stable. */
@@ -110,31 +119,26 @@ class ChallengeSession private constructor(
 
     private fun forgetBaselines(result: ChallengeResult) {
         if (result.events.isEmpty()) return
+        forgetEverything()
+    }
+
+    private fun forgetEverything() {
         adapters.clear()
+        latest.clear()
         activeSource = null
     }
 
     private fun currentStage() = definition.stages.getOrNull(engine.currentStageIndex())
 
-    /** After every input: a new stage starts from the last fresh counter of each of its allowed sources (not from the next sample). */
+    /**
+     * After every input: a new stage starts with NO baseline. The first measurement taken at or after the activation only becomes the
+     * baseline, the next ones count. A counter seen before the activation is never used: from two totals around the boundary there is
+     * no way to know how much of the difference was covered after it. (The price: the distance before a source's first sample of the
+     * stage is not credited.)
+     */
     private fun after(result: ChallengeResult, atMs: Long): ChallengeResult {
-        val activated = result.events.lastOrNull { it is ChallengeEvent.StageActivated } as? ChallengeEvent.StageActivated
-        if (activated != null) seedStage(activated.index, activated.activation, activated.atMs)
+        if (result.events.any { it is ChallengeEvent.StageActivated }) forgetEverything()
         return result
-    }
-
-    private fun seedStage(index: Int, activation: Long, atMs: Long) {
-        adapters.clear()
-        activeSource = null
-        val stage = definition.stages[index]
-        for (source in stage.allowedSources) {
-            val noted = latest[source] ?: continue
-            if (atMs - noted.atMs > maxGapMs) continue
-            val adapter = StageCounterAdapter(sessionId, source, stage.metric, maxGapMs = maxGapMs)
-            adapter.activate(activation)
-            adapter.onCounter(noted.epoch, noted.value, noted.atMs) // the baseline: credits nothing
-            adapters[source] = adapter
-        }
     }
 
     companion object {
