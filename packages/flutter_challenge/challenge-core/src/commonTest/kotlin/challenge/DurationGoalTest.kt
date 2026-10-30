@@ -79,6 +79,43 @@ class DurationGoalTest {
         assertEquals(10.0, s.snapshot(13_000).completed.single().progress, 1e-9)
     }
 
+    @Test fun confirmationAfterDeadlineJournalsTheTargetBeforeCompletion() {
+        val s = ChallengeSession(single(10.0, CompletionPolicy.MANUAL), "s")
+        val started = s.start(0)
+        // No tick arrived between the deadline and the confirmation.
+        val confirmed = s.confirm(CompletionEvidence.MANUAL, 13_000)
+        assertTrue(confirmed.events.first() is ChallengeEvent.TargetReached)
+        assertEquals(listOf(4L, 5L, 6L), confirmed.events.map { it.seq })
+        val lines = (started.events + confirmed.events).map(ChallengeJournal::encode)
+        val replay = assertNotNull(ChallengeJournal.recover(lines)).restored.session.snapshot(13_000)
+        assertEquals(s.snapshot(13_000).lastSeq, replay.lastSeq)
+        assertEquals(s.snapshot(13_000).completed.single().progress, replay.completed.single().progress)
+    }
+
+    @Test fun refusedConfirmationDoesNotAdvanceAnUnjournaledTarget() {
+        val s = ChallengeSession(single(10.0, CompletionPolicy.JUDGE_REQUIRED), "s")
+        s.start(0)
+        val before = s.snapshot(0).lastSeq
+        val refused = s.confirm(CompletionEvidence.MANUAL, 13_000)
+        assertEquals(Refusal.NOT_ALLOWED, refused.refusal)
+        assertTrue(refused.events.isEmpty())
+        assertEquals(before, s.snapshot(13_000).lastSeq)
+        assertEquals(StageStatus.ACTIVE, s.snapshot(13_000).stageStatus)
+        assertTrue(s.tick(13_000).events.single() is ChallengeEvent.TargetReached)
+    }
+
+    @Test fun confirmationBeforeTheLastJournalEventIsRefused() {
+        val s = ChallengeSession(single(60.0, CompletionPolicy.MANUAL), "s")
+        s.start(0)
+        s.tick(10_000) // checkpoint advances the journal clock
+        val before = s.snapshot(10_000).lastSeq
+        val refused = s.confirm(CompletionEvidence.MANUAL, 9_000)
+        assertEquals(Refusal.TIME_BACKWARDS, refused.refusal)
+        assertTrue(refused.events.isEmpty())
+        assertEquals(before, s.snapshot(10_000).lastSeq)
+        assertEquals(StageStatus.ACTIVE, s.snapshot(10_000).stageStatus)
+    }
+
     @Test fun aTimedStageConfirmedEarlyRecordsTheTimeItReallyRan() {
         val s = ChallengeSession(single(60.0, CompletionPolicy.MANUAL), "s")
         s.start(0)

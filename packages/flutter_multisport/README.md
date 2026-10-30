@@ -40,6 +40,8 @@ await coordinator.start(sessionId: 'session-1', stages: stages);
 ## Sport, goal, source
 
 - **Sport** says what the user does. **Goal** says what ends the stage: a distance (metres), a time (seconds of ACTIVE effort, a pause is not in it) or a number of repetitions. **Source** says where the progress comes from. The same sport can end on a distance or on a time; the same device can serve several sports.
+- `StageCompletion.confirmed` waits for the native target to be reached before `coordinator.confirm()` is accepted. `manualOnly` permits an early confirmation. For distance or repetition progress entered by hand, call `coordinator.addProgress(amount, eventId: stableId)` in the stage's unit before confirming; a distance goal does not become measured distance merely because the user confirmed it.
+- An automatic transition waits while the challenge is paused; after resume it gets a new `autoNextDelay` before starting the next stage.
 - A time goal is completed by the engine's own clock (see `flutter_challenge`), not by a Flutter `Timer`: it keeps counting in the background and survives the process dying (at most 10 s lost).
 - Swimming and rowing have NO default source: a stage of them needs a source named by the app (`sources: ['pool-counter']`), or `StageCompletion.manualOnly`. The library never promises a measurement that no device gives. Bluetooth does not work reliably under water: a swimming source is a device or a system chosen on purpose, not a Bluetooth parser assumed to work.
 - On foot (running, walking, football) the distance is counted as `runMeters`; cycling has its own metric with a higher speed limit.
@@ -50,6 +52,7 @@ await coordinator.start(sessionId: 'session-1', stages: stages);
 
 - A sample belongs to a stage by the time it was MADE, not the time it arrived: a heart-rate sample that arrives late is still filed under the stage it was made in; a sample made during a pause or between two stages is dropped (`recorder.dropped`).
 - `StageCompleted.result` is the result UNTIL THAT MOMENT; read `coordinator.results` (or the `ChallengeFinished` event) for the final numbers.
+- Use `coordinator.stageSamples(index, TelemetryMetric.heartRate)` for raw heart-rate history and `stageSeries(index, TelemetryMetric.heartRate, maxPoints: 200)` for a chart. These work after `restore()`. `telemetryRestoreStatus` reports a repaired/partial history; `flushTelemetry()` waits for pending writes before exporting results.
 - The telemetry is its own history (`TelemetryStore`), NOT the journal of the challenge: the journal protects the progress, the store keeps what the sensors said. `isTelemetryDurable` tells whether everything recorded is on the store.
 - The times of the stage boundaries are the wall clock of the phone, as the coordinator saw them (within about a second of the engine's clock). A route is not part of a result; read it from your GPS recording.
 

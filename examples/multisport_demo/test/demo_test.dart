@@ -68,4 +68,30 @@ void main() {
     expect(find.text('2. running'), findsOneWidget);
     expect(find.textContaining('avg —'), findsWidgets, reason: 'no heart-rate sensor ran: nothing is made up');
   });
+
+  testWidgets('the stages can be moved up and down and removed', (tester) async {
+    await tester.pumpWidget(MultisportDemoApp(challenge: FlutterChallenge(platform: FakeChallengePlatform()), store: MemoryTelemetryStore()));
+    for (final sport in ['running', 'swimming']) {
+      await tester.tap(find.text('Add stage'));
+      await tester.pumpAndSettle();
+      if (sport != 'running') {
+        await tester.tap(find.byType(DropdownButton<SportType>));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(sport).last);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('I end it by hand'));
+        await tester.pumpAndSettle();
+      }
+      await tester.tap(find.text('Add'));
+      await tester.pumpAndSettle();
+    }
+    List<String> order() => [for (final t in tester.widgetList<ListTile>(find.byType(ListTile))) (t.title! as Text).data!];
+    expect(order(), ['Running 1 km', 'Swimming 1 km']);
+    await tester.tap(find.byTooltip('Move down').first);
+    await tester.pumpAndSettle();
+    expect(order(), ['Swimming 1 km', 'Running 1 km']);
+    await tester.tap(find.byTooltip('Remove').first);
+    await tester.pumpAndSettle();
+    expect(order(), ['Running 1 km']);
+  });
 }

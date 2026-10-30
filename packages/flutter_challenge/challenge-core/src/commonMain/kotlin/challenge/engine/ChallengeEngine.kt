@@ -102,17 +102,21 @@ class ChallengeEngine(val definition: ChallengeDefinition, val sessionId: String
      */
     fun confirm(evidence: CompletionEvidence, atMs: Long): ChallengeResult {
         if (state != ChallengeState.ACTIVE || stageStatus == StageStatus.COMPLETED) return ChallengeResult.refused(Refusal.WRONG_STATE)
-        if (atMs < maxOf(stageStartedAt, lastAcceptedAt)) return ChallengeResult.refused(Refusal.TIME_BACKWARDS)
-        val due = settle(atMs) // a time that already ran out is settled before the confirmation is judged
-        if (due.any { it is ChallengeEvent.StageCompleted }) return ChallengeResult(due)
-        val allowed = when (definition.stages[index].policy) {
+        if (atMs < maxOf(stageStartedAt, lastAcceptedAt, lastEventAt)) return ChallengeResult.refused(Refusal.TIME_BACKWARDS)
+        val policy = definition.stages[index].policy
+        val allowed = when (policy) {
             CompletionPolicy.AUTO -> false
             CompletionPolicy.MANUAL, CompletionPolicy.SENSOR_OR_MANUAL ->
                 evidence == CompletionEvidence.MANUAL || evidence == CompletionEvidence.JUDGE
             CompletionPolicy.JUDGE_REQUIRED -> evidence == CompletionEvidence.JUDGE
         }
+        // A refused command must not mutate the engine: otherwise a target event can be applied without reaching the journal.
+        // AUTO is the exception: a due timer still completes when this command happens to arrive before the next tick.
+        if (!allowed && policy != CompletionPolicy.AUTO) return ChallengeResult.refused(Refusal.NOT_ALLOWED)
+        val due = settle(atMs)
+        if (due.any { it is ChallengeEvent.StageCompleted }) return ChallengeResult(due)
         if (!allowed) return ChallengeResult.refused(Refusal.NOT_ALLOWED)
-        return ChallengeResult(complete(atMs, evidence))
+        return ChallengeResult(due + complete(atMs, evidence))
     }
 
     /** Starts the next stage explicitly, so the transition time stays in the total. */

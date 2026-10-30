@@ -19,7 +19,7 @@ class MultisportDemoApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: 'Multisport',
-    theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
+    theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true, splashFactory: InkRipple.splashFactory),
     home: CreateChallengeScreen(challenge: challenge ?? FlutterChallenge(), store: store ?? MemoryTelemetryStore()),
   );
 }
@@ -46,6 +46,8 @@ class _CreateChallengeScreenState extends State<CreateChallengeScreen> {
     );
     if (config != null) setState(() => _stages.add(config));
   }
+
+  void _move(int from, int to) => setState(() => _stages.insert(to, _stages.removeAt(from)));
 
   Future<void> _start() async {
     final coordinator = ChallengeCoordinator(challenge: widget.challenge, store: widget.store, catalog: _catalog);
@@ -81,11 +83,7 @@ class _CreateChallengeScreenState extends State<CreateChallengeScreen> {
         Expanded(
           child: _stages.isEmpty
               ? const Center(child: Text('Add the sports of your challenge, in order.'))
-              : ReorderableListView(
-                  onReorder: (from, to) => setState(() {
-                    if (to > from) to -= 1;
-                    _stages.insert(to, _stages.removeAt(from));
-                  }),
+              : ListView(
                   children: [
                     for (var i = 0; i < _stages.length; i++)
                       ListTile(
@@ -93,10 +91,18 @@ class _CreateChallengeScreenState extends State<CreateChallengeScreen> {
                         leading: CircleAvatar(child: Text('${i + 1}')),
                         title: Text(describeStage(_stages[i])),
                         subtitle: Text(_stages[i].transition == TransitionPolicy.autoNext ? 'then starts the next by itself' : 'then waits for you'),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline),
-                          tooltip: 'Remove',
-                          onPressed: () => setState(() => _stages.removeAt(i)),
+                        // up / down / remove (a drag list's callback changed between Flutter versions: buttons work on all of them)
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(icon: const Icon(Icons.arrow_upward), tooltip: 'Move up', onPressed: i == 0 ? null : () => _move(i, i - 1)),
+                            IconButton(
+                              icon: const Icon(Icons.arrow_downward),
+                              tooltip: 'Move down',
+                              onPressed: i == _stages.length - 1 ? null : () => _move(i, i + 1),
+                            ),
+                            IconButton(icon: const Icon(Icons.delete_outline), tooltip: 'Remove', onPressed: () => setState(() => _stages.removeAt(i))),
+                          ],
                         ),
                       ),
                   ],

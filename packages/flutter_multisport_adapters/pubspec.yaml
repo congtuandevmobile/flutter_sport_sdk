@@ -1,5 +1,5 @@
 name: flutter_multisport_adapters
-description: "Adapters that feed flutter_activity and flutter_multisport from flutter_tracking_gps and flutter_sport_ble: a GPS total or the counter of one Bluetooth device as a progress source, and heart rate, cadence, speed or power as telemetry, each with the time it was really measured."
+description: "Compatibility bundle for the optional GPS and BLE sport adapters. New apps can install either adapter separately."
 version: 0.0.1-beta
 repository: https://github.com/congtuandevmobile/flutter_sport_sdk
 resolution: workspace
@@ -11,11 +11,13 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_activity: ^0.0.1-beta
-  flutter_sport_ble: ^0.0.1-beta
-  flutter_tracking_gps: ^0.0.1-beta.3
+  flutter_tracking_gps_adapter: ^0.0.1-beta
+  flutter_sport_ble_adapter: ^0.0.1-beta
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_activity: ^0.0.1-beta
+  flutter_sport_ble: ^0.0.1-beta
+  flutter_tracking_gps: ^0.0.1-beta.3

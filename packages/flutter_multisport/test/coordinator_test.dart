@@ -31,12 +31,28 @@ void main() {
 
   final t0 = DateTime(2026, 1, 1, 10);
   final stages = [
-    SportStageConfig(id: 'run', sport: SportType.running, goal: SportGoal.distanceKm(1)),
-    SportStageConfig(id: 'ball', sport: SportType.football, goal: SportGoal.duration(const Duration(minutes: 10))),
-    SportStageConfig(id: 'bike', sport: SportType.cycling, goal: SportGoal.distanceKm(2)),
+    SportStageConfig(
+      id: 'run',
+      sport: SportType.running,
+      goal: SportGoal.distanceKm(1),
+    ),
+    SportStageConfig(
+      id: 'ball',
+      sport: SportType.football,
+      goal: SportGoal.duration(const Duration(minutes: 10)),
+    ),
+    SportStageConfig(
+      id: 'bike',
+      sport: SportType.cycling,
+      goal: SportGoal.distanceKm(2),
+    ),
   ];
 
-  ChallengeCoordinator make({List<SportStageConfig>? s, TelemetryStore? st, Duration autoNextDelay = Duration.zero}) {
+  ChallengeCoordinator make({
+    List<SportStageConfig>? s,
+    TelemetryStore? st,
+    Duration autoNextDelay = Duration.zero,
+  }) {
     final c = ChallengeCoordinator(
       challenge: FlutterChallenge(platform: platform),
       store: st ?? store,
@@ -57,237 +73,687 @@ void main() {
     coordinator = make();
   });
 
-  test('start builds the challenge from the stages and announces the first one', () async {
-    await coordinator.start(sessionId: 's1', stages: stages);
-    await settle();
-    expect(platform.definition.stages.map((s) => s.metric), [ProgressMetric.runMeters, ProgressMetric.duration, ProgressMetric.cycleMeters]);
-    expect(events.single, isA<StageStarted>().having((e) => e.index, 'index', 0));
-    expect(coordinator.currentStage?.id, 'run');
-  });
+  test(
+    'start builds the challenge from the stages and announces the first one',
+    () async {
+      await coordinator.start(sessionId: 's1', stages: stages);
+      await settle();
+      expect(platform.definition.stages.map((s) => s.metric), [
+        ProgressMetric.runMeters,
+        ProgressMetric.duration,
+        ProgressMetric.cycleMeters,
+      ]);
+      expect(
+        events.single,
+        isA<StageStarted>().having((e) => e.index, 'index', 0),
+      );
+      expect(coordinator.currentStage?.id, 'run');
+    },
+  );
 
-  test('a source is forwarded with its epoch and age; every source goes to the challenge, which decides what counts', () async {
-    final gps = _Counter('gps');
-    final rower = _Counter('rower');
-    coordinator.attachProgress(gps);
-    coordinator.attachProgress(rower);
-    await coordinator.start(sessionId: 's1', stages: stages);
-    gps.controller.add(const CounterReading(value: 120.5, epoch: 2, age: Duration(milliseconds: 300)));
-    rower.controller.add(const CounterReading(value: 40));
-    await settle();
-    expect(platform.counters, ['gps:2:120.5:300', 'rower:1:40.0:0']);
-  });
+  test(
+    'a source is forwarded with its epoch and age; every source goes to the challenge, which decides what counts',
+    () async {
+      final gps = _Counter('gps');
+      final rower = _Counter('rower');
+      coordinator.attachProgress(gps);
+      coordinator.attachProgress(rower);
+      await coordinator.start(sessionId: 's1', stages: stages);
+      gps.controller.add(
+        const CounterReading(
+          value: 120.5,
+          epoch: 2,
+          age: Duration(milliseconds: 300),
+        ),
+      );
+      rower.controller.add(const CounterReading(value: 40));
+      await settle();
+      expect(platform.counters, ['gps:2:120.5:300', 'rower:1:40.0:0']);
+    },
+  );
 
-  test('a stage completes: the app is told, the result has the evidence and the telemetry of THAT stage, then it waits for the user', () async {
-    final strap = _Telemetry();
-    coordinator.attachTelemetry(strap);
-    await coordinator.start(sessionId: 's1', stages: stages);
-    for (final (sec, hr) in [(10, 140.0), (20, 150.0), (30, 160.0)]) {
-      strap.controller.add(TelemetrySample(metric: TelemetryMetric.heartRate, value: hr, at: t0.add(Duration(seconds: sec)), sourceId: 'strap'));
-    }
-    await settle(); // the samples have arrived
-    now = t0.add(const Duration(minutes: 5));
-    platform.completeStage(duration: const Duration(minutes: 5));
-    await settle();
+  test(
+    'a stage completes: the app is told, the result has the evidence and the telemetry of THAT stage, then it waits for the user',
+    () async {
+      final strap = _Telemetry();
+      coordinator.attachTelemetry(strap);
+      await coordinator.start(sessionId: 's1', stages: stages);
+      for (final (sec, hr) in [(10, 140.0), (20, 150.0), (30, 160.0)]) {
+        strap.controller.add(
+          TelemetrySample(
+            metric: TelemetryMetric.heartRate,
+            value: hr,
+            at: t0.add(Duration(seconds: sec)),
+            sourceId: 'strap',
+          ),
+        );
+      }
+      await settle(); // the samples have arrived
+      now = t0.add(const Duration(minutes: 5));
+      platform.completeStage(duration: const Duration(minutes: 5));
+      await settle();
 
-    final done = events.whereType<StageCompleted>().single;
-    expect(done.index, 0);
-    expect(done.completed.evidence, CompletionEvidence.sensor);
-    expect(done.result.averageHeartRate, 150);
-    expect(done.result.maxHeartRate, 160);
-    expect(done.result.averageCadence, isNull, reason: 'no cadence sensor: nothing is made up');
-    expect(done.result.distanceMeters, 1000);
-    expect(done.result.activeDuration, const Duration(minutes: 5));
-    expect(events.last, isA<AwaitingNextStage>().having((e) => e.nextIndex, 'next', 1));
-  });
+      final done = events.whereType<StageCompleted>().single;
+      expect(done.index, 0);
+      expect(done.completed.evidence, CompletionEvidence.sensor);
+      expect(done.result.averageHeartRate, 150);
+      expect(done.result.maxHeartRate, 160);
+      expect(
+        done.result.averageCadence,
+        isNull,
+        reason: 'no cadence sensor: nothing is made up',
+      );
+      expect(done.result.distanceMeters, 1000);
+      expect(done.result.activeDuration, const Duration(minutes: 5));
+      expect(
+        events.last,
+        isA<AwaitingNextStage>().having((e) => e.nextIndex, 'next', 1),
+      );
+    },
+  );
 
-  test('the user moves on: the next stage starts at the moment of the request and its telemetry is its own', () async {
-    final strap = _Telemetry();
-    coordinator.attachTelemetry(strap);
-    await coordinator.start(sessionId: 's1', stages: stages);
-    now = t0.add(const Duration(minutes: 5));
-    platform.completeStage();
-    await settle();
-    now = t0.add(const Duration(minutes: 6)); // a minute of transition
-    await coordinator.nextStage();
-    strap.controller.add(TelemetrySample(metric: TelemetryMetric.heartRate, value: 120, at: t0.add(const Duration(minutes: 7)), sourceId: 'strap'));
-    // made between the two stages: belongs to none
-    strap.controller.add(TelemetrySample(metric: TelemetryMetric.heartRate, value: 99, at: t0.add(const Duration(minutes: 5, seconds: 30)), sourceId: 'strap'));
-    now = t0.add(const Duration(minutes: 16));
-    platform.completeStage(duration: const Duration(minutes: 10));
-    await settle();
-
-    final second = events.whereType<StageCompleted>().last.result;
-    expect(second.index, 1);
-    expect(second.startedAt, t0.add(const Duration(minutes: 6)));
-    expect(second.stats[TelemetryMetric.heartRate]!.count, 1);
-    expect(second.averageHeartRate, 120);
-  });
-
-  test('a sample that arrives AFTER its stage ended is still filed under the stage it was made in (event time, not arrival time)', () async {
-    final strap = _Telemetry();
-    coordinator.attachTelemetry(strap);
-    await coordinator.start(sessionId: 's1', stages: stages);
-    now = t0.add(const Duration(minutes: 5));
-    platform.completeStage();
-    await settle();
-    now = t0.add(const Duration(minutes: 6));
-    await coordinator.nextStage();
-    // arrives in stage 2, but was made at minute 4 (in stage 1)
-    strap.controller.add(TelemetrySample(metric: TelemetryMetric.heartRate, value: 171, at: t0.add(const Duration(minutes: 4)), sourceId: 'strap'));
-    await settle();
-    expect(coordinator.results.single.maxHeartRate, 171);
-    expect(coordinator.currentResult?.stats, isEmpty);
-  });
-
-  test('samples made while paused are dropped; a pause is not in the stage', () async {
-    final strap = _Telemetry();
-    coordinator.attachTelemetry(strap);
-    await coordinator.start(sessionId: 's1', stages: stages);
-    now = t0.add(const Duration(minutes: 1));
-    await coordinator.pause();
-    strap.controller.add(TelemetrySample(metric: TelemetryMetric.heartRate, value: 90, at: t0.add(const Duration(minutes: 2)), sourceId: 'strap'));
-    now = t0.add(const Duration(minutes: 3));
-    await coordinator.resume();
-    strap.controller.add(TelemetrySample(metric: TelemetryMetric.heartRate, value: 130, at: t0.add(const Duration(minutes: 4)), sourceId: 'strap'));
-    await settle();
-    final r = coordinator.currentResult!;
-    expect(r.stats[TelemetryMetric.heartRate]!.count, 1);
-    expect(r.averageHeartRate, 130);
-    expect(r.pausedDuration, const Duration(minutes: 2));
-  });
-
-  test('a stage with autoNext starts the next one by itself; a stage with waitForUser does not', () async {
-    coordinator = make(autoNextDelay: const Duration(milliseconds: 10));
-    final auto = [
-      SportStageConfig(id: 'run', sport: SportType.running, goal: SportGoal.distanceKm(1), transition: TransitionPolicy.autoNext),
-      SportStageConfig(id: 'ball', sport: SportType.football, goal: SportGoal.duration(const Duration(minutes: 10))),
-      SportStageConfig(id: 'bike', sport: SportType.cycling, goal: SportGoal.distanceKm(2)),
-    ];
-    await coordinator.start(sessionId: 's1', stages: auto);
-    platform.completeStage();
-    await Future<void>.delayed(const Duration(milliseconds: 60));
-    expect(coordinator.snapshot!.stageIndex, 1, reason: 'the next stage began by itself');
-    expect(events.whereType<AwaitingNextStage>(), isEmpty);
-    platform.completeStage();
-    await Future<void>.delayed(const Duration(milliseconds: 60));
-    expect(coordinator.snapshot!.stageIndex, 1, reason: 'stage 2 is waitForUser: it waits');
-    expect(events.whereType<AwaitingNextStage>().single.nextIndex, 2);
-  });
-
-  test('the whole Running -> Football -> Cycling challenge ends with one result per stage, told once', () async {
-    await coordinator.start(sessionId: 's1', stages: stages);
-    for (var i = 0; i < 3; i++) {
-      now = now.add(const Duration(minutes: 5));
+  test(
+    'the user moves on: the next stage starts at the moment of the request and its telemetry is its own',
+    () async {
+      final strap = _Telemetry();
+      coordinator.attachTelemetry(strap);
+      await coordinator.start(sessionId: 's1', stages: stages);
+      now = t0.add(const Duration(minutes: 5));
       platform.completeStage();
       await settle();
-      platform.republish(); // a repeated snapshot must not repeat an event
+      now = t0.add(const Duration(minutes: 6)); // a minute of transition
+      await coordinator.nextStage();
+      strap.controller.add(
+        TelemetrySample(
+          metric: TelemetryMetric.heartRate,
+          value: 120,
+          at: t0.add(const Duration(minutes: 7)),
+          sourceId: 'strap',
+        ),
+      );
+      // made between the two stages: belongs to none
+      strap.controller.add(
+        TelemetrySample(
+          metric: TelemetryMetric.heartRate,
+          value: 99,
+          at: t0.add(const Duration(minutes: 5, seconds: 30)),
+          sourceId: 'strap',
+        ),
+      );
+      now = t0.add(const Duration(minutes: 16));
+      platform.completeStage(duration: const Duration(minutes: 10));
       await settle();
-      if (i < 2) await coordinator.nextStage();
-    }
-    await settle();
-    expect(events.whereType<StageStarted>().map((e) => e.index), [0, 1, 2]);
-    expect(events.whereType<StageCompleted>().map((e) => e.index), [0, 1, 2]);
-    final finished = events.whereType<ChallengeFinished>().single;
-    expect(finished.results.map((r) => r.stageId), ['run', 'ball', 'bike']);
-    expect(coordinator.currentStage, isNull);
-  });
 
-  test('the same snapshot published again and again repeats no event', () async {
-    await coordinator.start(sessionId: 's1', stages: stages);
-    platform.completeStage();
-    await settle();
-    final count = events.length;
-    for (var i = 0; i < 5; i++) {
-      platform.republish();
-    }
-    await settle();
-    expect(events.length, count);
-  });
+      final second = events.whereType<StageCompleted>().last.result;
+      expect(second.index, 1);
+      expect(second.startedAt, t0.add(const Duration(minutes: 6)));
+      expect(second.stats[TelemetryMetric.heartRate]!.count, 1);
+      expect(second.averageHeartRate, 120);
+    },
+  );
 
-  test('a repetition count carries the stage the user saw; a confirmation too, so a late one is refused', () async {
-    final reps = [SportStageConfig(id: 'sq', sport: SportType.strength, goal: const SportGoal.repetitions(20)), stages[1]];
-    await coordinator.start(sessionId: 's1', stages: reps);
-    await coordinator.addRepetitions(5);
-    expect(platform.deltas.single, 'manual:5.0:1');
-    await coordinator.confirm();
-    expect(platform.confirms.single, 'manual:1');
-    now = now.add(const Duration(minutes: 1));
-    await coordinator.nextStage();
-    // a confirmation for the stage the user saw before, delivered now
-    expect(
-      () => FlutterChallenge(platform: platform).confirm('s1', CompletionEvidence.manual, expectedStageActivation: 1),
-      throwsA(isA<ChallengeException>().having((e) => e.code, 'code', 'STALE_ACTIVATION')),
-    );
-  });
+  test(
+    'a sample that arrives AFTER its stage ended is still filed under the stage it was made in (event time, not arrival time)',
+    () async {
+      final strap = _Telemetry();
+      coordinator.attachTelemetry(strap);
+      await coordinator.start(sessionId: 's1', stages: stages);
+      now = t0.add(const Duration(minutes: 5));
+      platform.completeStage();
+      await settle();
+      now = t0.add(const Duration(minutes: 6));
+      await coordinator.nextStage();
+      // arrives in stage 2, but was made at minute 4 (in stage 1)
+      strap.controller.add(
+        TelemetrySample(
+          metric: TelemetryMetric.heartRate,
+          value: 171,
+          at: t0.add(const Duration(minutes: 4)),
+          sourceId: 'strap',
+        ),
+      );
+      await settle();
+      expect(coordinator.results.single.maxHeartRate, 171);
+      expect(coordinator.currentResult?.stats, isEmpty);
+    },
+  );
 
-  test('a reading the challenge refuses becomes one error event, not a flood', () async {
-    final gps = _Counter('gps');
-    coordinator.attachProgress(gps);
-    await coordinator.start(sessionId: 's1', stages: stages);
-    platform.counterError = ChallengeException('WRONG_STATE', 'no');
-    for (var i = 0; i < 5; i++) {
-      gps.controller.add(CounterReading(value: i * 1.0));
-    }
-    await settle();
-    expect(events.whereType<CoordinatorError>().single.code, 'READING_REFUSED');
-  });
+  test(
+    'samples made while paused are dropped; a pause is not in the stage',
+    () async {
+      final strap = _Telemetry();
+      coordinator.attachTelemetry(strap);
+      await coordinator.start(sessionId: 's1', stages: stages);
+      now = t0.add(const Duration(minutes: 1));
+      await coordinator.pause();
+      strap.controller.add(
+        TelemetrySample(
+          metric: TelemetryMetric.heartRate,
+          value: 90,
+          at: t0.add(const Duration(minutes: 2)),
+          sourceId: 'strap',
+        ),
+      );
+      now = t0.add(const Duration(minutes: 3));
+      await coordinator.resume();
+      strap.controller.add(
+        TelemetrySample(
+          metric: TelemetryMetric.heartRate,
+          value: 130,
+          at: t0.add(const Duration(minutes: 4)),
+          sourceId: 'strap',
+        ),
+      );
+      await settle();
+      final r = coordinator.currentResult!;
+      expect(r.stats[TelemetryMetric.heartRate]!.count, 1);
+      expect(r.averageHeartRate, 130);
+      expect(r.pausedDuration, const Duration(minutes: 2));
+    },
+  );
 
-  test('a challenge that cannot start leaves nothing behind and the same id can be tried again', () async {
-    final bad = [SportStageConfig(id: 'swim', sport: SportType.swimming, goal: const SportGoal.distanceMeters(200))];
-    await expectLater(coordinator.start(sessionId: 's1', stages: bad), throwsA(isA<SportConfigException>()));
-    expect(store.lines, isEmpty);
-    await coordinator.start(sessionId: 's1', stages: stages);
-  });
+  test(
+    'a stage with autoNext starts the next one by itself; a stage with waitForUser does not',
+    () async {
+      coordinator = make(autoNextDelay: const Duration(milliseconds: 10));
+      final auto = [
+        SportStageConfig(
+          id: 'run',
+          sport: SportType.running,
+          goal: SportGoal.distanceKm(1),
+          transition: TransitionPolicy.autoNext,
+        ),
+        SportStageConfig(
+          id: 'ball',
+          sport: SportType.football,
+          goal: SportGoal.duration(const Duration(minutes: 10)),
+        ),
+        SportStageConfig(
+          id: 'bike',
+          sport: SportType.cycling,
+          goal: SportGoal.distanceKm(2),
+        ),
+      ];
+      await coordinator.start(sessionId: 's1', stages: auto);
+      platform.completeStage();
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      expect(
+        coordinator.snapshot!.stageIndex,
+        1,
+        reason: 'the next stage began by itself',
+      );
+      expect(events.whereType<AwaitingNextStage>(), isEmpty);
+      platform.completeStage();
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      expect(
+        coordinator.snapshot!.stageIndex,
+        1,
+        reason: 'stage 2 is waitForUser: it waits',
+      );
+      expect(events.whereType<AwaitingNextStage>().single.nextIndex, 2);
+    },
+  );
 
-  test('after the process died the challenge and the telemetry come back, paused, without the dead time', () async {
-    final dir = Directory.systemTemp.createTempSync('multisport_');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final files = FileTelemetryStore(dir);
-    coordinator = make(st: files);
+  test(
+    'autoNext waits through a pause in the transition and resumes afterward',
+    () async {
+      coordinator = make(autoNextDelay: const Duration(milliseconds: 80));
+      final auto = [
+        SportStageConfig(
+          id: 'run',
+          sport: SportType.running,
+          goal: SportGoal.distanceKm(1),
+          transition: TransitionPolicy.autoNext,
+        ),
+        stages[1],
+      ];
+      await coordinator.start(sessionId: 's1', stages: auto);
+      platform.completeStage();
+      await settle();
+      await coordinator.pause();
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(
+        coordinator.snapshot!.stageIndex,
+        0,
+        reason: 'the timer must not move stages while paused',
+      );
+      await coordinator.resume();
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(coordinator.snapshot!.stageIndex, 1);
+    },
+  );
+
+  test(
+    'the whole Running -> Football -> Cycling challenge ends with one result per stage, told once',
+    () async {
+      await coordinator.start(sessionId: 's1', stages: stages);
+      for (var i = 0; i < 3; i++) {
+        now = now.add(const Duration(minutes: 5));
+        platform.completeStage();
+        await settle();
+        platform.republish(); // a repeated snapshot must not repeat an event
+        await settle();
+        if (i < 2) await coordinator.nextStage();
+      }
+      await settle();
+      expect(events.whereType<StageStarted>().map((e) => e.index), [0, 1, 2]);
+      expect(events.whereType<StageCompleted>().map((e) => e.index), [0, 1, 2]);
+      final finished = events.whereType<ChallengeFinished>().single;
+      expect(finished.results.map((r) => r.stageId), ['run', 'ball', 'bike']);
+      expect(coordinator.currentStage, isNull);
+    },
+  );
+
+  test(
+    'the same snapshot published again and again repeats no event',
+    () async {
+      await coordinator.start(sessionId: 's1', stages: stages);
+      platform.completeStage();
+      await settle();
+      final count = events.length;
+      for (var i = 0; i < 5; i++) {
+        platform.republish();
+      }
+      await settle();
+      expect(events.length, count);
+    },
+  );
+
+  test(
+    'a repetition count carries the stage the user saw; a confirmation too, so a late one is refused',
+    () async {
+      final reps = [
+        SportStageConfig(
+          id: 'sq',
+          sport: SportType.strength,
+          goal: const SportGoal.repetitions(20),
+        ),
+        stages[1],
+      ];
+      await coordinator.start(sessionId: 's1', stages: reps);
+      await coordinator.addRepetitions(5);
+      expect(platform.deltas.single, 'manual:5.0:1');
+      await coordinator.confirm();
+      expect(platform.confirms.single, 'manual:1');
+      now = now.add(const Duration(minutes: 1));
+      await coordinator.nextStage();
+      // a confirmation for the stage the user saw before, delivered now
+      expect(
+        () => FlutterChallenge(
+          platform: platform,
+        ).confirm('s1', CompletionEvidence.manual, expectedStageActivation: 1),
+        throwsA(
+          isA<ChallengeException>().having(
+            (e) => e.code,
+            'code',
+            'STALE_ACTIVATION',
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'confirmed stage refuses confirmation until the native target is reached',
+    () async {
+      final confirmed = [
+        SportStageConfig(
+          id: 'run',
+          sport: SportType.running,
+          goal: SportGoal.distanceKm(1),
+          completion: StageCompletion.confirmed,
+        ),
+      ];
+      await coordinator.start(sessionId: 's1', stages: confirmed);
+      await expectLater(coordinator.confirm(), throwsA(isA<StateError>()));
+      expect(platform.confirms, isEmpty);
+      platform.reachTarget();
+      await settle();
+      await coordinator.confirm();
+      expect(platform.confirms, ['manual:1']);
+      expect(coordinator.snapshot!.state, ChallengeState.completed);
+    },
+  );
+
+  test(
+    'manual distance stage accepts measured metres without pretending the goal was met',
+    () async {
+      await coordinator.start(
+        sessionId: 's1',
+        stages: [
+          SportStageConfig(
+            id: 'swim',
+            sport: SportType.swimming,
+            goal: const SportGoal.distanceMeters(200),
+            completion: StageCompletion.manualOnly,
+          ),
+        ],
+      );
+      await coordinator.addProgress(25, eventId: 'pool-length-1');
+      expect(platform.deltas, ['manual:25.0:1']);
+    },
+  );
+
+  test(
+    'confirmed duration waits for its clock target before accepting confirmation',
+    () async {
+      await coordinator.start(
+        sessionId: 's1',
+        stages: [
+          SportStageConfig(
+            id: 'weights',
+            sport: SportType.strength,
+            goal: SportGoal.duration(const Duration(hours: 1)),
+            completion: StageCompletion.confirmed,
+          ),
+        ],
+      );
+      await expectLater(coordinator.confirm(), throwsA(isA<StateError>()));
+      expect(platform.confirms, isEmpty);
+      platform.reachTarget();
+      await settle();
+      await coordinator.confirm();
+      expect(platform.confirms, ['manual:1']);
+    },
+  );
+
+  test(
+    'confirmation cannot jump to a new stage while the native snapshot is in flight',
+    () async {
+      await coordinator.start(
+        sessionId: 's1',
+        stages: [
+          SportStageConfig(
+            id: 'first',
+            sport: SportType.strength,
+            goal: const SportGoal.repetitions(10),
+            completion: StageCompletion.manualOnly,
+          ),
+          SportStageConfig(
+            id: 'second',
+            sport: SportType.strength,
+            goal: const SportGoal.repetitions(10),
+            completion: StageCompletion.manualOnly,
+          ),
+        ],
+      );
+      final gate = Completer<ChallengeSnapshot>();
+      platform.nextSnapshot = gate.future;
+      final pending = coordinator.confirm();
+      platform.completeStage();
+      await platform.nextStage('s1');
+      gate.complete(platform.current);
+      await expectLater(
+        pending,
+        throwsA(
+          isA<ChallengeException>().having(
+            (e) => e.code,
+            'code',
+            'STALE_ACTIVATION',
+          ),
+        ),
+      );
+      expect(platform.confirms, isEmpty);
+    },
+  );
+
+  test(
+    'a reading the challenge refuses becomes one error event, not a flood',
+    () async {
+      final gps = _Counter('gps');
+      coordinator.attachProgress(gps);
+      await coordinator.start(sessionId: 's1', stages: stages);
+      platform.counterError = ChallengeException('WRONG_STATE', 'no');
+      for (var i = 0; i < 5; i++) {
+        gps.controller.add(CounterReading(value: i * 1.0));
+      }
+      await settle();
+      expect(
+        events.whereType<CoordinatorError>().single.code,
+        'READING_REFUSED',
+      );
+    },
+  );
+
+  test(
+    'a challenge that cannot start leaves nothing behind and the same id can be tried again',
+    () async {
+      final bad = [
+        SportStageConfig(
+          id: 'swim',
+          sport: SportType.swimming,
+          goal: const SportGoal.distanceMeters(200),
+        ),
+      ];
+      await expectLater(
+        coordinator.start(sessionId: 's1', stages: bad),
+        throwsA(isA<SportConfigException>()),
+      );
+      expect(store.lines, isEmpty);
+      await coordinator.start(sessionId: 's1', stages: stages);
+    },
+  );
+
+  test(
+    'after the process died the challenge and the telemetry come back, paused, without the dead time',
+    () async {
+      final dir = Directory.systemTemp.createTempSync('multisport_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final files = FileTelemetryStore(dir);
+      coordinator = make(st: files);
+      final strap = _Telemetry();
+      coordinator.attachTelemetry(strap);
+      await coordinator.start(sessionId: 's1', stages: stages);
+      strap.controller.add(
+        TelemetrySample(
+          metric: TelemetryMetric.heartRate,
+          value: 150,
+          at: t0.add(const Duration(minutes: 1)),
+          sourceId: 'strap',
+        ),
+      );
+      await settle();
+      now = t0.add(
+        const Duration(minutes: 2),
+      ); // the last thing recorded; then the process dies
+      strap.controller.add(
+        TelemetrySample(
+          metric: TelemetryMetric.heartRate,
+          value: 160,
+          at: now,
+          sourceId: 'strap',
+        ),
+      );
+      await settle();
+      final before = platform.current;
+      await coordinator.dispose();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      // a new process: new coordinator, the same store; the native side restores the challenge PAUSED
+      platform.restoreSnapshot = ChallengeSnapshot(
+        sessionId: 's1',
+        state: ChallengeState.paused,
+        definitionId: 'multisport',
+        definitionVersion: 1,
+        stageIndex: 0,
+        stageId: 'run',
+        stageActivation: before.stageActivation,
+        stageStatus: StageStatus.active,
+        stageProgress: 0,
+        stageTarget: 1000,
+        totalElapsed: Duration.zero,
+        stageElapsed: Duration.zero,
+        completed: const [],
+        lastSeq: 5,
+        recoveries: 1,
+        journalFailed: false,
+        restoreStatus: RestoreStatus.intact,
+      );
+      now = t0.add(const Duration(minutes: 30)); // 28 minutes dead
+      coordinator = make(st: files);
+      coordinator.attachTelemetry(strap);
+      await coordinator.restore(sessionId: 's1', stages: stages);
+      expect(
+        coordinator.currentResult!.stats[TelemetryMetric.heartRate]!.count,
+        2,
+      );
+      expect(
+        coordinator
+            .stageSamples(0, TelemetryMetric.heartRate)
+            .map((s) => s.value),
+        [150, 160],
+      );
+      expect(coordinator.stageSeries(0, TelemetryMetric.heartRate).length, 2);
+      expect(coordinator.telemetryRestoreStatus, RecordingRestoreStatus.intact);
+      await coordinator.resume();
+      now = t0.add(const Duration(minutes: 31));
+      strap.controller.add(
+        TelemetrySample(
+          metric: TelemetryMetric.heartRate,
+          value: 170,
+          at: now,
+          sourceId: 'strap',
+        ),
+      );
+      // made during the dead time: dropped
+      strap.controller.add(
+        TelemetrySample(
+          metric: TelemetryMetric.heartRate,
+          value: 60,
+          at: t0.add(const Duration(minutes: 10)),
+          sourceId: 'strap',
+        ),
+      );
+      await settle();
+      final r = coordinator.currentResult!;
+      expect(r.stats[TelemetryMetric.heartRate]!.count, 3);
+      expect(r.maxHeartRate, 170);
+      expect(
+        r.pausedDuration,
+        const Duration(minutes: 28),
+        reason: 'the dead time is a pause, not a stage time',
+      );
+    },
+  );
+
+  test(
+    'a cumulative metric is the sum of its increases: a counter that restarts adds nothing',
+    () async {
+      final strap = _Telemetry();
+      coordinator.attachTelemetry(strap);
+      await coordinator.start(
+        sessionId: 's1',
+        stages: [
+          SportStageConfig(
+            id: 'sw',
+            sport: SportType.swimming,
+            goal: const SportGoal.distanceMeters(200),
+            completion: StageCompletion.manualOnly,
+          ),
+        ],
+      );
+      for (final (min, v) in [(1, 10.0), (2, 40.0), (3, 5.0), (4, 25.0)]) {
+        strap.controller.add(
+          TelemetrySample(
+            metric: TelemetryMetric.strokeCount,
+            value: v,
+            at: t0.add(Duration(minutes: min)),
+            sourceId: 'swim-band',
+          ),
+        );
+      }
+      await settle();
+      expect(
+        coordinator.currentResult!.strokeCount,
+        30 + 20,
+        reason: '10->40 (+30), 40->5 is a reset (0), 5->25 (+20)',
+      );
+    },
+  );
+
+  test(
+    'oldSourcesMustNotFeedNewSession: detachSources cuts the sources of the previous session',
+    () async {
+      final gps = _Counter('gps');
+      coordinator.attachProgress(gps);
+      await coordinator.start(sessionId: 's1', stages: stages);
+      gps.controller.add(const CounterReading(value: 10));
+      await settle();
+      expect(platform.counters, ['gps:1:10.0:0']);
+      await coordinator.detachSources();
+      // a second session with the same coordinator
+      platform = FakeChallengePlatform();
+      coordinator = make();
+      await coordinator.start(sessionId: 's2', stages: stages);
+      gps.controller.add(const CounterReading(value: 99));
+      await settle();
+      expect(
+        platform.counters,
+        isEmpty,
+        reason: 'the old source is not heard by the new session',
+      );
+    },
+  );
+
+  test(
+    'a repeated measurement is recorded once per stage, and a pending write is not called durable',
+    () async {
+      final strap = _Telemetry();
+      coordinator.attachTelemetry(strap);
+      await coordinator.start(sessionId: 's1', stages: stages);
+      final sample = TelemetrySample(
+        metric: TelemetryMetric.heartRate,
+        value: 150,
+        at: t0.add(const Duration(seconds: 5)),
+        sourceId: 'strap',
+      );
+      strap.controller.add(sample);
+      strap.controller.add(sample);
+      await settle();
+      expect(
+        coordinator.currentResult!.stats[TelemetryMetric.heartRate]!.count,
+        1,
+      );
+      expect(coordinator.hasTelemetryWriteFailures, isFalse);
+    },
+  );
+
+  test('a counter is not bridged across a pause inside a stage', () async {
     final strap = _Telemetry();
     coordinator.attachTelemetry(strap);
-    await coordinator.start(sessionId: 's1', stages: stages);
-    strap.controller.add(TelemetrySample(metric: TelemetryMetric.heartRate, value: 150, at: t0.add(const Duration(minutes: 1)), sourceId: 'strap'));
-    await settle();
-    now = t0.add(const Duration(minutes: 2)); // the last thing recorded; then the process dies
-    strap.controller.add(TelemetrySample(metric: TelemetryMetric.heartRate, value: 160, at: now, sourceId: 'strap'));
-    await settle();
-    final before = platform.current;
-    await coordinator.dispose();
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-
-    // a new process: new coordinator, the same store; the native side restores the challenge PAUSED
-    platform.restoreSnapshot = ChallengeSnapshot(
-      sessionId: 's1', state: ChallengeState.paused, definitionId: 'multisport', definitionVersion: 1, stageIndex: 0, stageId: 'run',
-      stageActivation: before.stageActivation, stageStatus: StageStatus.active, stageProgress: 0, stageTarget: 1000,
-      totalElapsed: Duration.zero, stageElapsed: Duration.zero, completed: const [], lastSeq: 5, recoveries: 1, journalFailed: false,
-      restoreStatus: RestoreStatus.intact,
+    await coordinator.start(
+      sessionId: 's1',
+      stages: [
+        SportStageConfig(
+          id: 'sw',
+          sport: SportType.swimming,
+          goal: const SportGoal.distanceMeters(200),
+          completion: StageCompletion.manualOnly,
+        ),
+      ],
     );
-    now = t0.add(const Duration(minutes: 30)); // 28 minutes dead
-    coordinator = make(st: files);
-    coordinator.attachTelemetry(strap);
-    await coordinator.restore(sessionId: 's1', stages: stages);
-    expect(coordinator.currentResult!.stats[TelemetryMetric.heartRate]!.count, 2);
+    TelemetrySample strokes(int min, double v) => TelemetrySample(
+      metric: TelemetryMetric.strokeCount,
+      value: v,
+      at: t0.add(Duration(minutes: min)),
+      sourceId: 'band',
+    );
+    strap.controller.add(strokes(1, 0));
+    strap.controller.add(strokes(2, 50));
+    await settle();
+    now = t0.add(const Duration(minutes: 3));
+    await coordinator.pause();
+    now = t0.add(const Duration(minutes: 10));
     await coordinator.resume();
-    now = t0.add(const Duration(minutes: 31));
-    strap.controller.add(TelemetrySample(metric: TelemetryMetric.heartRate, value: 170, at: now, sourceId: 'strap'));
-    // made during the dead time: dropped
-    strap.controller.add(TelemetrySample(metric: TelemetryMetric.heartRate, value: 60, at: t0.add(const Duration(minutes: 10)), sourceId: 'strap'));
+    strap.controller.add(
+      strokes(11, 500),
+    ); // the band counted 450 strokes while paused: only a baseline
+    strap.controller.add(strokes(12, 530));
     await settle();
-    final r = coordinator.currentResult!;
-    expect(r.stats[TelemetryMetric.heartRate]!.count, 3);
-    expect(r.maxHeartRate, 170);
-    expect(r.pausedDuration, const Duration(minutes: 28), reason: 'the dead time is a pause, not a stage time');
-  });
-
-  test('a cumulative metric is the sum of its increases: a counter that restarts adds nothing', () async {
-    final strap = _Telemetry();
-    coordinator.attachTelemetry(strap);
-    await coordinator.start(sessionId: 's1', stages: [SportStageConfig(id: 'sw', sport: SportType.swimming, goal: const SportGoal.distanceMeters(200), completion: StageCompletion.manualOnly)]);
-    for (final (min, v) in [(1, 10.0), (2, 40.0), (3, 5.0), (4, 25.0)]) {
-      strap.controller.add(TelemetrySample(metric: TelemetryMetric.strokeCount, value: v, at: t0.add(Duration(minutes: min)), sourceId: 'swim-band'));
-    }
-    await settle();
-    expect(coordinator.currentResult!.strokeCount, 30 + 20, reason: '10->40 (+30), 40->5 is a reset (0), 5->25 (+20)');
+    expect(
+      coordinator.currentResult!.strokeCount,
+      80,
+      reason: '50 before the pause + 30 after; never the 450 in between',
+    );
   });
 }

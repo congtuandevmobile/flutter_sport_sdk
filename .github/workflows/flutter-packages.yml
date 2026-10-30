@@ -42,6 +42,16 @@ jobs:
         run: |
           flutter analyze
           flutter test
+      - name: flutter_tracking_gps_adapter
+        working-directory: packages/flutter_tracking_gps_adapter
+        run: |
+          flutter analyze
+          flutter test
+      - name: flutter_sport_ble_adapter
+        working-directory: packages/flutter_sport_ble_adapter
+        run: |
+          flutter analyze
+          flutter test
       - name: flutter_multisport_adapters
         working-directory: packages/flutter_multisport_adapters
         run: |

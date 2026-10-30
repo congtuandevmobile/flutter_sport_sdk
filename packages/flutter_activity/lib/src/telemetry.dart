@@ -22,7 +22,7 @@ enum TelemetryMetric {
 /// One measurement, with the time it was MADE (not the time it arrived).
 @immutable
 class TelemetrySample {
-  const TelemetrySample({required this.metric, required this.value, required this.at, required this.sourceId});
+  const TelemetrySample({required this.metric, required this.value, required this.at, required this.sourceId, this.epoch = 1});
 
   final TelemetryMetric metric;
   final double value;
@@ -30,6 +30,10 @@ class TelemetrySample {
 
   /// The device or source that made it ("strap-1", "gps").
   final String sourceId;
+
+  /// For a counter: grows with every new connection of the source. A counter that restarted (a new epoch) is not a jump: its first value
+  /// is only a baseline.
+  final int epoch;
 }
 
 /// What the samples of ONE metric say. Absent (null) where there are no samples: nothing is ever made up.
@@ -46,7 +50,11 @@ class MetricStats {
   });
 
   /// Statistics of [samples] (at least one, of the same [metric]). Sorts [samples] by time.
-  factory MetricStats.fromSamples(TelemetryMetric metric, List<TelemetrySample> samples) {
+  ///
+  /// For a counter the total is the sum of the increases WITHIN one run of one connection: the baseline is the first value of every
+  /// (segment, source, epoch). [segmentOf] says which stretch of active time a sample belongs to (a pause starts a new one): what a
+  /// counter did between two stretches (while paused) is never added.
+  factory MetricStats.fromSamples(TelemetryMetric metric, List<TelemetrySample> samples, {int Function(TelemetrySample)? segmentOf}) {
     samples.sort((a, b) => a.at.compareTo(b.at));
     var sum = 0.0;
     var min = samples.first.value;
@@ -61,9 +69,10 @@ class MetricStats {
       total = 0;
       final previous = <String, double>{};
       for (final s in samples) {
-        final before = previous[s.sourceId];
+        final key = '${segmentOf?.call(s) ?? 0}|${s.sourceId}|${s.epoch}';
+        final before = previous[key];
         if (before != null && s.value >= before) total = total! + (s.value - before); // a counter that went back (a reset) adds nothing
-        previous[s.sourceId] = s.value;
+        previous[key] = s.value;
       }
     }
     return MetricStats(

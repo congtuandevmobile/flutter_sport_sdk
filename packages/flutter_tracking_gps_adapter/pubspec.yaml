@@ -1,0 +1,20 @@
+name: flutter_tracking_gps_adapter
+description: "Optional GPS progress and speed telemetry sources for flutter_activity and flutter_multisport."
+version: 0.0.1-beta
+repository: https://github.com/congtuandevmobile/flutter_sport_sdk
+resolution: workspace
+
+environment:
+  sdk: ^3.10.7
+  flutter: '>=3.3.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_activity: ^0.0.1-beta
+  flutter_tracking_gps: ^0.0.1-beta.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0

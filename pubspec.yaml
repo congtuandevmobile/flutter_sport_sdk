@@ -12,6 +12,8 @@ workspace:
   - packages/flutter_challenge
   - packages/flutter_activity
   - packages/flutter_multisport
+  - packages/flutter_tracking_gps_adapter
+  - packages/flutter_sport_ble_adapter
   - packages/flutter_multisport_adapters
   - examples/sensors_demo
   - examples/multisport_demo

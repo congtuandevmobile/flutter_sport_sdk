@@ -12,7 +12,9 @@ packages/flutter_workout        a workout session (native, journal on disk); own
 packages/flutter_challenge      a challenge session (native, own journal); owns challenge-core/ (event-sourced stages, journal, recovery)
 packages/flutter_activity       records ONE activity from sources: history of HR/cadence/speed/distance, summary (pure Dart; knows neither GPS nor BLE)
 packages/flutter_multisport     sports/goals catalog, coordinator, per-stage results (pure Dart; depends on flutter_challenge and flutter_activity)
-packages/flutter_multisport_adapters  GPS and BLE as sources for flutter_activity / flutter_multisport (depends on gps, ble and activity)
+packages/flutter_tracking_gps_adapter  optional GPS sources for flutter_activity / flutter_multisport (depends on gps and activity)
+packages/flutter_sport_ble_adapter     optional BLE sources for flutter_activity / flutter_multisport (depends on ble and activity)
+packages/flutter_multisport_adapters   compatibility export of both optional adapter packages
 examples/sensors_demo           one app with the plugins (a link/launch check)
 examples/multisport_demo        create and run a multisport challenge with simulated sensors
 ```

@@ -1,4 +1,5 @@
 ## Unreleased
+- Fix: confirming a timed stage before its next native tick returns every event it applied (`TargetReached` before completion); a refused confirmation leaves no unjournaled state change.
 - New: a stage can have a TIME goal. `ProgressMetric.duration` (target in SECONDS, no `allowedSources`): the engine completes the stage by its own clock (a pause is not in it), with the new `CompletionEvidence.timer`; the runners tick once a second, the completion is journaled before it is shown, and it is stamped at the moment the time was reached, not when the tick came. A MANUAL / JUDGE stage reaches its target and waits for the confirmation; `progress` of a timed stage is the seconds it ran. A running timed stage leaves a checkpoint event (`K`) every 10 s (unmeasured), so a crash loses at most that much of its time.
 - Both new enum values are appended (Pigeon + Dart + Kotlin + Swift); an old journal without them is read as before.
 - Fix: `start` is refused with `RECOVERY_REQUIRED` while the previous challenge finished in memory but its journal failed (the active pointer is its only way to recovery); `clearSession` discards it on purpose and frees the runner.

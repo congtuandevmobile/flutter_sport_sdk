@@ -120,6 +120,16 @@ class SessionTest {
         assertEquals(5.0, s.snapshot(103_000).stageProgress, 1e-9)
     }
 
+    @Test fun aManualSwimRecordsOnlyTheMetresEnteredBeforeConfirmation() {
+        val swim = ChallengeDefinition("swim", 1, listOf(stage("pool", ProgressMetric.SWIM_METERS, 200.0, CompletionPolicy.MANUAL, "manual")))
+        val s = ChallengeSession(swim, "swim-1")
+        s.start(0)
+        assertTrue(s.onDelta("manual", "length-1", 25.0, 1_000).accepted)
+        assertEquals(Refusal.DUPLICATE, s.onDelta("manual", "length-1", 25.0, 1_500).refusal)
+        assertTrue(s.confirm(CompletionEvidence.MANUAL, 2_000).accepted)
+        assertEquals(25.0, s.snapshot(2_000).completed.single().progress, 1e-9)
+    }
+
     // ---- the adapter ----
 
     @Test fun theAdapterBaselinesRejectsGapsSpikesAndResets() {

@@ -2,6 +2,21 @@ import 'package:meta/meta.dart';
 
 import 'telemetry.dart';
 
+/// What a restore found in the store of a recording.
+enum RecordingRestoreStatus {
+  /// Not restored: the recording was made in this run.
+  notRestored,
+
+  /// Every line was good.
+  intact,
+
+  /// The LAST line was cut (the process died while writing it): it was cut off, nothing else was lost.
+  tailRepaired,
+
+  /// A line in the MIDDLE was damaged: only what comes before it is trusted, what came after is gone. The numbers may be too low.
+  partial,
+}
+
 /// How much of the ACTIVE time a sensor really covered. A strap that dropped for two minutes shows here: the history has a hole, and the
 /// summary says so instead of averaging over what it has.
 @immutable
@@ -31,7 +46,11 @@ class ActivitySummary {
     required this.sources,
     required this.droppedSamples,
     required this.duplicateSamples,
+    required this.rejectedFutureSamples,
+    required this.distanceSource,
+    required this.restoreStatus,
     required this.isDurable,
+    required this.hasWriteFailures,
   });
 
   final String sessionId;
@@ -63,8 +82,21 @@ class ActivitySummary {
   /// Samples that repeated one already recorded.
   final int duplicateSamples;
 
-  /// True when everything recorded is on the store.
+  /// Samples refused because their time was in the future (a clock that is wrong, an adapter that is wrong).
+  final int rejectedFutureSamples;
+
+  /// The ONE source whose counter makes the distance (the others are kept in the history but never added: two sources that watch the
+  /// same run would count it twice). Null when no distance was recorded.
+  final String? distanceSource;
+
+  /// What the restore found (see [RecordingRestoreStatus]); [RecordingRestoreStatus.notRestored] for a recording made in this run.
+  final RecordingRestoreStatus restoreStatus;
+
+  /// True when everything recorded is on the store RIGHT NOW: false while a write is still on its way, and after a failed one.
   final bool isDurable;
+
+  /// True when at least one write FAILED (use this for an error banner; [isDurable] is also false for a moment after every sample).
+  final bool hasWriteFailures;
 
   double? get averageHeartRate => stats[TelemetryMetric.heartRate]?.average;
   double? get maxHeartRate => stats[TelemetryMetric.heartRate]?.max;
@@ -105,12 +137,22 @@ class ActivitySummary {
     'averagePaceSecondsPerKm': averagePaceSecondsPerKm,
     'stats': {for (final e in stats.entries) e.key.name: e.value.toJson()},
     'coverage': {
-      for (final e in coverage.entries) e.key.name: {'ratio': e.value.ratio, 'longestGapMs': e.value.longestGap.inMilliseconds},
+      for (final e in coverage.entries)
+        e.key.name: {
+          'ratio': e.value.ratio,
+          'longestGapMs': e.value.longestGap.inMilliseconds,
+        },
     },
-    'sources': {for (final e in sources.entries) e.key.name: e.value.toList()..sort()},
+    'sources': {
+      for (final e in sources.entries) e.key.name: e.value.toList()..sort(),
+    },
     'droppedSamples': droppedSamples,
     'duplicateSamples': duplicateSamples,
+    'rejectedFutureSamples': rejectedFutureSamples,
+    'distanceSource': distanceSource,
+    'restoreStatus': restoreStatus.name,
     'isDurable': isDurable,
+    'hasWriteFailures': hasWriteFailures,
   };
 }
 
@@ -121,4 +163,43 @@ class SeriesPoint {
 
   final DateTime at;
   final double value;
+}
+
+/// Builds a bounded chart from samples of one metric. Empty time buckets stay empty, so gaps in sensor coverage remain visible.
+/// Cumulative metrics use the last counter value in a bucket; instantaneous metrics use its average.
+List<SeriesPoint> telemetrySeries(
+  List<TelemetrySample> samples,
+  TelemetryMetric metric, {
+  int maxPoints = 200,
+}) {
+  if (maxPoints < 1) {
+    throw RangeError.value(maxPoints, 'maxPoints', 'must be at least 1');
+  }
+  final ordered = List.of(samples)..sort((a, b) => a.at.compareTo(b.at));
+  if (ordered.length <= maxPoints) {
+    return [for (final s in ordered) SeriesPoint(s.at, s.value)];
+  }
+  final from = ordered.first.at.microsecondsSinceEpoch;
+  final span = ordered.last.at.microsecondsSinceEpoch - from;
+  final width = span / maxPoints;
+  final buckets = <int, List<TelemetrySample>>{};
+  for (final s in ordered) {
+    final index = width <= 0
+        ? 0
+        : ((s.at.microsecondsSinceEpoch - from) / width).floor().clamp(
+            0,
+            maxPoints - 1,
+          );
+    (buckets[index] ??= []).add(s);
+  }
+  return [
+    for (final i in (buckets.keys.toList()..sort()))
+      SeriesPoint(
+        buckets[i]!.last.at,
+        metric.isCumulative
+            ? buckets[i]!.last.value
+            : buckets[i]!.fold<double>(0, (a, s) => a + s.value) /
+                  buckets[i]!.length,
+      ),
+  ];
 }

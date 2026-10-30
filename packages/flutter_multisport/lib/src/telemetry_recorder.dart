@@ -21,35 +21,114 @@ class StageTelemetryRecorder {
   StageTelemetryRecorder._(this._store, this.sessionId, this._clock);
 
   /// Starts recording a NEW session. Throws a [StateError] when the store already has lines for [sessionId] (a session id is used once).
-  static Future<StageTelemetryRecorder> begin(TelemetryStore store, String sessionId, {DateTime Function()? clock}) async {
+  static Future<StageTelemetryRecorder> begin(
+    TelemetryStore store,
+    String sessionId, {
+    DateTime Function()? clock,
+  }) async {
     if ((await store.read(sessionId)).isNotEmpty) {
-      throw StateError('telemetry for "$sessionId" already exists: restore it, or clear it first');
+      throw StateError(
+        'telemetry for "$sessionId" already exists: restore it, or clear it first',
+      );
     }
     return StageTelemetryRecorder._(store, sessionId, clock ?? DateTime.now);
   }
 
   /// Rebuilds the recorder of [sessionId] from its store. The stage that was running when the process died is closed at its LAST record
   /// (the dead time is not a stage time) and the recorder is paused: call [markResumed] when the challenge resumes.
-  static Future<StageTelemetryRecorder> restore(TelemetryStore store, String sessionId, {DateTime Function()? clock}) async {
-    final recorder = StageTelemetryRecorder._(store, sessionId, clock ?? DateTime.now);
-    var lastAt = 0;
-    for (final line in await store.read(sessionId)) {
-      final Map<String, Object?> r;
-      try {
-        r = jsonDecode(line) as Map<String, Object?>;
-      } on FormatException {
-        continue; // a line cut by a crash
+  static Future<StageTelemetryRecorder> restore(
+    TelemetryStore store,
+    String sessionId, {
+    DateTime Function()? clock,
+  }) async {
+    final recorder = StageTelemetryRecorder._(
+      store,
+      sessionId,
+      clock ?? DateTime.now,
+    );
+    int? lastAt;
+    final lines = await store.read(sessionId);
+    final good = <String>[];
+    var status = RecordingRestoreStatus.intact;
+    for (var i = 0; i < lines.length; i++) {
+      final r = _parse(lines[i]);
+      if (r == null || (recorder._stages.isEmpty && r['k'] != 'start')) {
+        status = i == lines.length - 1
+            ? RecordingRestoreStatus.tailRepaired
+            : RecordingRestoreStatus.partial;
+        break;
       }
-      lastAt = (r['t'] as num?)?.toInt() ?? lastAt;
+      // A late sample can carry a time older than a stage start or resume already replayed.
+      final recordAt = (r['t'] as num).toInt();
+      if (lastAt == null || recordAt > lastAt) lastAt = recordAt;
       recorder._apply(r);
+      good.add(lines[i]);
+    }
+    recorder.restoreStatus = status;
+    if (status != RecordingRestoreStatus.intact) {
+      try {
+        await store.replace(sessionId, good);
+      } catch (_) {
+        recorder.writeFailures += 1;
+      }
     }
     if (recorder._open != null) {
-      final at = DateTime.fromMillisecondsSinceEpoch(lastAt);
+      final at = DateTime.fromMillisecondsSinceEpoch(lastAt!);
       recorder._pause(at);
       recorder._write({'k': 'pause', 't': lastAt, 'why': 'restore'});
     }
     recorder._paused = true;
     return recorder;
+  }
+
+  static Map<String, Object?>? _parse(String line) {
+    try {
+      final decoded = jsonDecode(line);
+      if (decoded is! Map<String, Object?>) return null;
+      final time = decoded['t'];
+      if (time is! num || !time.isFinite) return null;
+      DateTime.fromMillisecondsSinceEpoch(time.toInt());
+      final kind = decoded['k'];
+      if (kind == 'start') {
+        if (decoded['i'] is! num ||
+            decoded['id'] is! String ||
+            decoded['sport'] is! String ||
+            decoded['gt'] is! String) {
+          return null;
+        }
+        if (!SportType.values.any((s) => s.name == decoded['sport'])) {
+          return null;
+        }
+        if (!GoalType.values.any((g) => g.name == decoded['gt'])) return null;
+        final goal = decoded['gv'];
+        if (goal is! num || !goal.isFinite || goal <= 0) return null;
+      } else if (kind == 'end') {
+        if (decoded['i'] is! num) return null;
+      } else if (kind == 's') {
+        if (decoded['i'] is! num ||
+            decoded['m'] is! String ||
+            !TelemetryMetric.values.any((m) => m.name == decoded['m'])) {
+          return null;
+        }
+        final value = decoded['v'];
+        if (value is! num || !value.isFinite) return null;
+        if (decoded['src'] != null && decoded['src'] is! String) return null;
+        final micros = decoded['us'];
+        if (micros != null) {
+          if (micros is! num || !micros.isFinite) return null;
+          DateTime.fromMicrosecondsSinceEpoch(micros.toInt());
+        }
+        final epoch = decoded['e'];
+        if (epoch != null && (epoch is! num || !epoch.isFinite)) return null;
+      } else if (kind != 'pause' && kind != 'resume') {
+        return null;
+      }
+      return decoded;
+    } on FormatException catch (_) {
+      return null;
+    } on ArgumentError catch (_) {
+      return null;
+    }
   }
 
   final TelemetryStore _store;
@@ -69,10 +148,23 @@ class StageTelemetryRecorder {
   /// How many samples were dropped because they were made outside every stage interval.
   int dropped = 0;
 
-  /// How many records could not be stored. 0 means everything recorded is on the store.
+  /// How many samples repeated one already recorded (same metric, source and time).
+  int duplicates = 0;
+
+  /// How many records could not be stored.
   int writeFailures = 0;
 
-  bool get isDurable => writeFailures == 0;
+  /// Integrity of the history recovered from the telemetry store.
+  RecordingRestoreStatus restoreStatus = RecordingRestoreStatus.notRestored;
+
+  int _pending = 0;
+  final _seen = <String>{};
+
+  /// True when everything recorded is on the store RIGHT NOW (no write on its way, none failed).
+  bool get isDurable => _pending == 0 && writeFailures == 0;
+
+  /// True when at least one write failed (use this for an error banner: [isDurable] is also false for a moment after every sample).
+  bool get hasWriteFailures => writeFailures > 0;
 
   /// Completes when every record so far is stored.
   Future<void> flush() => _tail;
@@ -81,6 +173,19 @@ class StageTelemetryRecorder {
   int get currentStage => _current;
 
   bool get isPaused => _paused;
+
+  /// Samples of [metric] from one stage, in measurement-time order. This also works after [restore].
+  List<TelemetrySample> samplesOf(int index, TelemetryMetric metric) => List.of(
+    _samples[index]?.where((s) => s.metric == metric) ??
+        const <TelemetrySample>[],
+  )..sort((a, b) => a.at.compareTo(b.at));
+
+  /// At most [maxPoints] chart points for one stage and metric; periods without samples stay empty.
+  List<SeriesPoint> series(
+    int index,
+    TelemetryMetric metric, {
+    int maxPoints = 200,
+  }) => telemetrySeries(samplesOf(index, metric), metric, maxPoints: maxPoints);
 
   // ── what the coordinator tells ────────────────────────────────────────────
 
@@ -92,7 +197,12 @@ class StageTelemetryRecorder {
     _stages[index] = _Stage(config.id, config.sport, config.goal, at);
     if (!_paused) _openInterval(index, at);
     _write({
-      'k': 'start', 'i': index, 'id': config.id, 'sport': config.sport.name, 'gt': config.goal.type.name, 'gv': config.goal.value,
+      'k': 'start',
+      'i': index,
+      'id': config.id,
+      'sport': config.sport.name,
+      'gt': config.goal.type.name,
+      'gv': config.goal.value,
       't': at.millisecondsSinceEpoch,
     });
   }
@@ -129,9 +239,22 @@ class StageTelemetryRecorder {
       dropped += 1;
       return;
     }
+    final key =
+        '${sample.metric.name}|${sample.sourceId}|${sample.at.microsecondsSinceEpoch}';
+    if (!_seen.add(key)) {
+      duplicates += 1; // the same measurement again (a snapshot that repeats)
+      return;
+    }
     (_samples[stage] ??= []).add(sample);
     _write({
-      'k': 's', 'i': stage, 'm': sample.metric.name, 'v': sample.value, 't': t.millisecondsSinceEpoch, 'src': sample.sourceId,
+      'k': 's',
+      'i': stage,
+      'm': sample.metric.name,
+      'v': sample.value,
+      't': t.millisecondsSinceEpoch,
+      'src': sample.sourceId,
+      'us': t.microsecondsSinceEpoch,
+      'e': sample.epoch,
     });
   }
 
@@ -163,13 +286,36 @@ class StageTelemetryRecorder {
       activeDuration: completed?.duration ?? active,
       evidence: completed?.evidence,
       progress: completed?.progress,
-      stats: {for (final e in byMetric.entries) e.key: MetricStats.fromSamples(e.key, e.value)},
-      sources: {for (final list in byMetric.values) for (final s in list) s.sourceId},
+      stats: {
+        for (final e in byMetric.entries)
+          e.key: MetricStats.fromSamples(
+            e.key,
+            e.value,
+            segmentOf: (s) => _segmentOf(index, s),
+          ),
+      },
+      sources: {
+        for (final list in byMetric.values)
+          for (final s in list) s.sourceId,
+      },
       pausedDuration: total > active ? total - active : Duration.zero,
     );
   }
 
   // ── intervals ─────────────────────────────────────────────────────────────
+
+  /// The stretch of active time of stage [stage] that [s] was made in (a pause starts a new one: a counter is only measured inside one).
+  int _segmentOf(int stage, TelemetrySample s) {
+    final list = _intervals[stage] ?? const <_Interval>[];
+    for (var i = 0; i < list.length; i++) {
+      final end = list[i].end;
+      if (!s.at.isBefore(list[i].start) &&
+          (end == null || !s.at.isAfter(end))) {
+        return i;
+      }
+    }
+    return -1;
+  }
 
   int? _stageAt(DateTime t) {
     final open = _open;
@@ -177,7 +323,9 @@ class StageTelemetryRecorder {
     for (final entry in _intervals.entries) {
       for (final i in entry.value) {
         final end = i.end;
-        if (end != null && !t.isBefore(i.start) && !t.isAfter(end)) return entry.key;
+        if (end != null && !t.isBefore(i.start) && !t.isAfter(end)) {
+          return entry.key;
+        }
       }
     }
     return null;
@@ -203,23 +351,45 @@ class StageTelemetryRecorder {
 
   void _write(Map<String, Object?> record) {
     final line = jsonEncode(record);
-    _tail = _tail.then((_) => _store.append(sessionId, line)).catchError((Object _) {
-      writeFailures += 1;
+    _pending += 1;
+    _tail = _tail.then((_) async {
+      try {
+        await _store.append(sessionId, line);
+      } catch (_) {
+        writeFailures += 1;
+      } finally {
+        _pending -= 1;
+      }
     });
   }
 
   /// Replays one stored record (no write).
   void _apply(Map<String, Object?> r) {
-    DateTime at() => DateTime.fromMillisecondsSinceEpoch((r['t'] as num).toInt());
+    DateTime at() =>
+        DateTime.fromMillisecondsSinceEpoch((r['t'] as num).toInt());
     switch (r['k']) {
       case 'start':
         final index = (r['i'] as num).toInt();
-        final sport = SportType.values.firstWhere((s) => s.name == r['sport'], orElse: () => SportType.custom);
-        final type = GoalType.values.firstWhere((g) => g.name == r['gt'], orElse: () => GoalType.duration);
+        final sport = SportType.values.firstWhere(
+          (s) => s.name == r['sport'],
+          orElse: () => SportType.custom,
+        );
+        final type = GoalType.values.firstWhere(
+          (g) => g.name == r['gt'],
+          orElse: () => GoalType.duration,
+        );
         final goal = switch (type) {
-          GoalType.distance => SportGoal.distanceMeters((r['gv'] as num).toDouble()),
-          GoalType.duration => SportGoal.duration(Duration(milliseconds: ((r['gv'] as num).toDouble() * 1000).round())),
-          GoalType.repetitions => SportGoal.repetitions((r['gv'] as num).round()),
+          GoalType.distance => SportGoal.distanceMeters(
+            (r['gv'] as num).toDouble(),
+          ),
+          GoalType.duration => SportGoal.duration(
+            Duration(
+              milliseconds: ((r['gv'] as num).toDouble() * 1000).round(),
+            ),
+          ),
+          GoalType.repetitions => SportGoal.repetitions(
+            (r['gv'] as num).round(),
+          ),
         };
         _closeOpen(at());
         _current = index;
@@ -242,8 +412,28 @@ class StageTelemetryRecorder {
         _paused = false;
         if (_stageRunning && _open == null) _openInterval(_current, at());
       case 's':
-        final metric = TelemetryMetric.values.firstWhere((m) => m.name == r['m'], orElse: () => TelemetryMetric.heartRate);
-        (_samples[(r['i'] as num).toInt()] ??= []).add(TelemetrySample(metric: metric, value: (r['v'] as num).toDouble(), at: at(), sourceId: (r['src'] as String?) ?? ''));
+        final metric = TelemetryMetric.values.firstWhere(
+          (m) => m.name == r['m'],
+          orElse: () => TelemetryMetric.heartRate,
+        );
+        final us = (r['us'] as num?)?.toInt();
+        final time = us == null
+            ? at()
+            : DateTime.fromMicrosecondsSinceEpoch(us);
+        final source = (r['src'] as String?) ?? '';
+        if (_seen.add(
+          '${metric.name}|$source|${time.microsecondsSinceEpoch}',
+        )) {
+          (_samples[(r['i'] as num).toInt()] ??= []).add(
+            TelemetrySample(
+              metric: metric,
+              value: (r['v'] as num).toDouble(),
+              at: time,
+              sourceId: source,
+              epoch: (r['e'] as num?)?.toInt() ?? 1,
+            ),
+          );
+        }
     }
   }
 }

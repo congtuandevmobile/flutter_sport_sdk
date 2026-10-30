@@ -110,8 +110,14 @@ class ChallengeCoordinator {
   /// The stage that is running (null before the first and after the last).
   SportStageConfig? get currentStage {
     final s = _latest;
-    if (s == null || s.state == ChallengeState.idle || s.state == ChallengeState.completed) return null;
-    return s.stageIndex >= 0 && s.stageIndex < _stages.length ? _stages[s.stageIndex] : null;
+    if (s == null ||
+        s.state == ChallengeState.idle ||
+        s.state == ChallengeState.completed) {
+      return null;
+    }
+    return s.stageIndex >= 0 && s.stageIndex < _stages.length
+        ? _stages[s.stageIndex]
+        : null;
   }
 
   /// The results of the stages that completed so far, with their telemetry.
@@ -119,19 +125,48 @@ class ChallengeCoordinator {
     final recorder = _recorder;
     final s = _latest;
     if (recorder == null || s == null) return const [];
-    return [for (var i = 0; i < s.completed.length; i++) recorder.resultFor(i, completed: s.completed[i])];
+    return [
+      for (var i = 0; i < s.completed.length; i++)
+        recorder.resultFor(i, completed: s.completed[i]),
+    ];
   }
+
+  /// Raw measurements of one metric in one stage, ordered by when they were measured. Available after [restore] too.
+  List<TelemetrySample> stageSamples(int index, TelemetryMetric metric) =>
+      _recorder?.samplesOf(index, metric) ?? const [];
+
+  /// Bounded points for a stage chart; intervals with no sensor measurements remain gaps.
+  List<SeriesPoint> stageSeries(
+    int index,
+    TelemetryMetric metric, {
+    int maxPoints = 200,
+  }) => _recorder?.series(index, metric, maxPoints: maxPoints) ?? const [];
+
+  /// What the stage telemetry store yielded during recovery (null before start/restore).
+  RecordingRestoreStatus? get telemetryRestoreStatus =>
+      _recorder?.restoreStatus;
+
+  /// Waits until every telemetry record submitted so far has reached its store.
+  Future<void> flushTelemetry() => _recorder?.flush() ?? Future<void>.value();
 
   /// The result of the stage that is running now, so far (no evidence, no end).
   StageResult? get currentResult {
     final recorder = _recorder;
     final s = _latest;
-    if (recorder == null || s == null || recorder.currentStage < 0 || s.state == ChallengeState.completed) return null;
+    if (recorder == null ||
+        s == null ||
+        recorder.currentStage < 0 ||
+        s.state == ChallengeState.completed) {
+      return null;
+    }
     return recorder.resultFor(recorder.currentStage);
   }
 
-  /// Whether the telemetry recorded so far is on the store.
+  /// Whether everything recorded so far is on the store RIGHT NOW (false for a moment after every sample, and after a failed write).
   bool get isTelemetryDurable => _recorder?.isDurable ?? true;
+
+  /// Whether a write of the telemetry FAILED (use it for an error banner).
+  bool get hasTelemetryWriteFailures => _recorder?.hasWriteFailures ?? false;
 
   // ── start / restore ───────────────────────────────────────────────────────
 
@@ -143,16 +178,26 @@ class ChallengeCoordinator {
     String challengeId = 'multisport',
     bool allowPause = true,
   }) async {
-    final definition = catalog.definitionOf(id: challengeId, stages: stages, allowPause: allowPause);
+    final definition = catalog.definitionOf(
+      id: challengeId,
+      stages: stages,
+      allowPause: allowPause,
+    );
     _reset();
-    final recorder = await StageTelemetryRecorder.begin(_store, sessionId, clock: _clock);
+    final recorder = await StageTelemetryRecorder.begin(
+      _store,
+      sessionId,
+      clock: _clock,
+    );
     _stages = List.of(stages);
     _sessionId = sessionId;
     _recorder = recorder;
     _listen();
     _startHint = _clock();
     try {
-      _handle(await _challenge.start(sessionId: sessionId, definition: definition));
+      _handle(
+        await _challenge.start(sessionId: sessionId, definition: definition),
+      );
     } catch (_) {
       await _snapshotSub?.cancel();
       _snapshotSub = null;
@@ -165,22 +210,44 @@ class ChallengeCoordinator {
 
   /// Picks the challenge [sessionId] up after the process died. [stages] must be the same list it started with. It comes back PAUSED:
   /// call [resume] to go on (the time the process was dead is in neither the stage nor its telemetry).
-  Future<void> restore({required String sessionId, required List<SportStageConfig> stages}) async {
-    catalog.definitionOf(id: 'restore', stages: stages); // the same stages must still be valid
+  Future<void> restore({
+    required String sessionId,
+    required List<SportStageConfig> stages,
+  }) async {
+    catalog.definitionOf(
+      id: 'restore',
+      stages: stages,
+    ); // the same stages must still be valid
     _reset();
     _stages = List.of(stages);
     _sessionId = sessionId;
-    _recorder = await StageTelemetryRecorder.restore(_store, sessionId, clock: _clock);
+    _recorder = await StageTelemetryRecorder.restore(
+      _store,
+      sessionId,
+      clock: _clock,
+    );
     _listen();
     final snap = await _challenge.restore(sessionId);
     _startedIndex = snap.stageIndex;
     _completedSeen = snap.completed.length;
     _finishedEmitted = snap.state == ChallengeState.completed;
-    _awaitingEmittedFor = snap.state == ChallengeState.transition ? snap.stageIndex + 1 : -1;
+    _awaitingEmittedFor = snap.state == ChallengeState.transition
+        ? snap.stageIndex + 1
+        : -1;
     _latest = snap;
   }
 
   // ── what the app attaches ─────────────────────────────────────────────────
+
+  /// Stops listening to every source attached so far. Sources live as long as the coordinator, NOT as long as a session: a source that is
+  /// attached keeps feeding whatever challenge is running (a GPS usually should). When the next session must not hear the sources of the
+  /// previous one, call this (or use a new coordinator) before [start] or [restore].
+  Future<void> detachSources() async {
+    for (final s in _sourceSubs) {
+      await s.cancel();
+    }
+    _sourceSubs.clear();
+  }
 
   /// Forwards the readings of [source] to the challenge, whatever the stage (the challenge lets only the stage's own sources count).
   void attachProgress(ProgressSource source) {
@@ -189,7 +256,13 @@ class ChallengeCoordinator {
         final id = _sessionId;
         if (id == null) return;
         _challenge
-            .submitCounter(id, source.sourceId, r.value, epoch: r.epoch, age: r.age)
+            .submitCounter(
+              id,
+              source.sourceId,
+              r.value,
+              epoch: r.epoch,
+              age: r.age,
+            )
             .catchError((Object e) => _error('READING_REFUSED', '$e'));
       }),
     );
@@ -200,36 +273,83 @@ class ChallengeCoordinator {
     _sourceSubs.add(source.samples.listen((s) => _recorder?.record(s)));
   }
 
-  /// A repetition count made by hand or by a counter that counts for itself (a "+1" button), for the stage that is running now. Pass a
-  /// stable [eventId] when a retry is possible: the same id is never counted twice.
-  Future<void> addRepetitions(double count, {String sourceId = 'manual', String? eventId}) {
+  /// Adds progress measured outside an attached counter, in the current stage's unit (metres or repetitions). A duration stage uses
+  /// its own clock. The source must be allowed by the stage; use a stable [eventId] when a request may be retried.
+  Future<void> addProgress(
+    double amount, {
+    String sourceId = 'manual',
+    String? eventId,
+  }) {
     final id = _sessionId;
     final snap = _latest;
     if (id == null || snap == null) throw StateError('no challenge is running');
+    if (snap.state != ChallengeState.active ||
+        snap.stageIndex < 0 ||
+        snap.stageIndex >= _stages.length) {
+      throw StateError('no stage is active');
+    }
+    if (_stages[snap.stageIndex].goal.type == GoalType.duration) {
+      throw StateError('a duration stage uses the challenge clock');
+    }
     return _challenge.submitDelta(
       id,
       sourceId,
-      eventId ?? '$sourceId-${_clock().microsecondsSinceEpoch}-${_manualCounter++}',
-      count,
+      eventId ??
+          '$sourceId-${_clock().microsecondsSinceEpoch}-${_manualCounter++}',
+      amount,
       // the stage the user SAW: a tap that arrives after the stage changed is dropped, not given to the next stage
       stageActivation: snap.stageActivation,
     );
   }
+
+  /// Convenience for a manual repetition count. For manually measured distance, use [addProgress] with metres.
+  Future<void> addRepetitions(
+    double count, {
+    String sourceId = 'manual',
+    String? eventId,
+  }) => addProgress(count, sourceId: sourceId, eventId: eventId);
 
   // ── commands ──────────────────────────────────────────────────────────────
 
   /// Starts the next stage (after one completed). With `TransitionPolicy.autoNext` the coordinator calls it by itself.
   Future<void> nextStage() async {
     _autoTimer?.cancel();
+    _autoScheduledFor = -1;
     _startHint = _clock();
     _handle(await _challenge.nextStage(_requireSession()));
   }
 
   /// Confirms the stage that is running (a `confirmed` or `manualOnly` stage, or a stage the user ends early). The activation of the
   /// stage the user saw is sent along, so a confirmation that arrives late cannot complete the next stage.
-  Future<void> confirm({CompletionEvidence evidence = CompletionEvidence.manual}) async {
-    final snap = _latest;
-    _handle(await _challenge.confirm(_requireSession(), evidence, expectedStageActivation: snap?.stageActivation));
+  Future<void> confirm({
+    CompletionEvidence evidence = CompletionEvidence.manual,
+  }) async {
+    final id = _requireSession();
+    final visible = _latest;
+    if (visible == null) throw StateError('no stage is active');
+    final snap = await _challenge.snapshot();
+    if (snap.stageActivation != visible.stageActivation) {
+      throw const ChallengeException(
+        'STALE_ACTIVATION',
+        'the stage changed before confirmation',
+      );
+    }
+    if (snap.state != ChallengeState.active ||
+        snap.stageIndex < 0 ||
+        snap.stageIndex >= _stages.length) {
+      throw StateError('no stage is active');
+    }
+    if (_stages[snap.stageIndex].completion == StageCompletion.confirmed &&
+        snap.stageStatus != StageStatus.targetReached) {
+      throw StateError('the stage target has not been reached');
+    }
+    _handle(
+      await _challenge.confirm(
+        id,
+        evidence,
+        expectedStageActivation: visible.stageActivation,
+      ),
+    );
   }
 
   Future<void> pause() async {
@@ -260,7 +380,8 @@ class ChallengeCoordinator {
 
   // ── reacting to the challenge ─────────────────────────────────────────────
 
-  String _requireSession() => _sessionId ?? (throw StateError('no challenge is running'));
+  String _requireSession() =>
+      _sessionId ?? (throw StateError('no challenge is running'));
 
   void _reset() {
     _autoTimer?.cancel();
@@ -281,12 +402,17 @@ class ChallengeCoordinator {
 
   void _handle(ChallengeSnapshot s) {
     final recorder = _recorder;
-    if (recorder == null || (s.sessionId != null && s.sessionId != _sessionId)) return;
+    if (recorder == null ||
+        (s.sessionId != null && s.sessionId != _sessionId)) {
+      return;
+    }
     _latest = s;
     final now = _clock();
 
     // a stage began
-    if (s.state != ChallengeState.idle && s.stageIndex > _startedIndex && s.stageIndex < _stages.length) {
+    if (s.state != ChallengeState.idle &&
+        s.stageIndex > _startedIndex &&
+        s.stageIndex < _stages.length) {
       final at = _startHint ?? now;
       _startHint = null;
       _startedIndex = s.stageIndex;
@@ -295,15 +421,27 @@ class ChallengeCoordinator {
     }
 
     // stages completed (in order, once each)
-    while (_completedSeen < s.completed.length && _completedSeen < _stages.length) {
+    while (_completedSeen < s.completed.length &&
+        _completedSeen < _stages.length) {
       final i = _completedSeen++;
       recorder.markStageEnded(i, now);
-      _emit(StageCompleted(i, _stages[i], s.completed[i], recorder.resultFor(i, completed: s.completed[i])));
+      _emit(
+        StageCompleted(
+          i,
+          _stages[i],
+          s.completed[i],
+          recorder.resultFor(i, completed: s.completed[i]),
+        ),
+      );
     }
 
     if (s.state == ChallengeState.paused) {
+      _autoTimer?.cancel();
+      _autoScheduledFor = -1;
       recorder.markPaused(now);
-    } else if (recorder.isPaused && (s.state == ChallengeState.active || s.state == ChallengeState.transition)) {
+    } else if (recorder.isPaused &&
+        (s.state == ChallengeState.active ||
+            s.state == ChallengeState.transition)) {
       recorder.markResumed(now);
     }
 
@@ -324,7 +462,12 @@ class ChallengeCoordinator {
       _finishedEmitted = true;
       _emit(ChallengeFinished(results));
     }
-    if (!recorder.isDurable) _error('TELEMETRY_NOT_STORED', 'the telemetry of this session could not be written');
+    if (recorder.hasWriteFailures) {
+      _error(
+        'TELEMETRY_NOT_STORED',
+        'the telemetry of this session could not be written',
+      );
+    }
   }
 
   void _scheduleAutoNext(int next) {
@@ -343,7 +486,9 @@ class ChallengeCoordinator {
   void _error(String code, String message) {
     final now = _clock();
     final last = _errorAt[code];
-    if (last != null && now.difference(last) < const Duration(seconds: 5)) return;
+    if (last != null && now.difference(last) < const Duration(seconds: 5)) {
+      return;
+    }
     _errorAt[code] = now;
     _emit(CoordinatorError(code, message));
   }
