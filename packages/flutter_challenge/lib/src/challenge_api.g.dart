@@ -579,14 +579,16 @@ class ChallengeHostApi {
   }
 
   /// Confirms the active stage (a manual stage, a sensor-or-manual stage the sensor could not complete, a judged stage).
-  Future<NativeChallengeSnapshot> confirm(String sessionId, NativeCompletionEvidence evidence) async {
+  /// [expectedStageActivation] is the activation the caller saw when it decided to confirm: a confirmation that arrives after the
+  /// stage changed fails with STALE_ACTIVATION instead of completing the next stage. Null: no check.
+  Future<NativeChallengeSnapshot> confirm(String sessionId, NativeCompletionEvidence evidence, int? expectedStageActivation) async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.flutter_challenge.ChallengeHostApi.confirm$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[sessionId, evidence]);
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[sessionId, evidence, expectedStageActivation]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
@@ -678,15 +680,17 @@ class ChallengeHostApi {
   }
 
   /// A delta of the current stage's metric from a source that counts for itself (reps, a station). [eventId] must be stable: the same
-  /// id is never counted twice, even across a restart.
-  Future<void> submitDelta(String sessionId, String sourceId, String eventId, double delta, int ageMs) async {
+  /// id is never counted twice, even across a restart. [stageActivation] is the activation of the stage the measurement was made for
+  /// (from a snapshot): a callback that arrives after the stage changed is dropped instead of advancing the next stage. Null: the
+  /// current stage.
+  Future<void> submitDelta(String sessionId, String sourceId, String eventId, double delta, int ageMs, int? stageActivation) async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.flutter_challenge.ChallengeHostApi.submitDelta$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[sessionId, sourceId, eventId, delta, ageMs]);
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[sessionId, sourceId, eventId, delta, ageMs, stageActivation]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     _extractReplyValueOrThrow(

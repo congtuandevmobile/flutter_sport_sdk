@@ -193,6 +193,18 @@ class WorkoutEngineTest {
     }
 
     @Test
+    fun restoringAnotherWorkoutWhileOneIsOpenIsRefusedAndChangesNothing() = runTest {
+        val other = engine()
+        other.start("w2", NativeWorkoutMode.INDOOR_RUNNING)
+        other.finish("w2") // w2 has a restorable journal
+        val e = engine()
+        e.start("w1", NativeWorkoutMode.INDOOR_RUNNING)
+        assertEquals("SESSION_OPEN", assertFailsWith<WorkoutException> { e.restore("w2") }.code)
+        assertEquals("w1", e.activeSessionId())
+        assertEquals(NativeWorkoutState.RUNNING, e.snapshot().state, "w1 is still the open workout")
+    }
+
+    @Test
     fun restoringTwiceDoesNotReplayAgainAndIsIdempotent() = runTest {
         val distance = runWorkoutAndDie()
         val e2 = engine()

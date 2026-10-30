@@ -613,7 +613,9 @@ protocol ChallengeHostApi {
   /// the write. A command the rules refuse fails with the reason as its code (WRONG_STATE, NOT_ALLOWED, PAUSE_NOT_ALLOWED, ...).
   func start(sessionId: String, definition: NativeChallengeDefinition, completion: @escaping (Result<NativeChallengeSnapshot, Error>) -> Void)
   /// Confirms the active stage (a manual stage, a sensor-or-manual stage the sensor could not complete, a judged stage).
-  func confirm(sessionId: String, evidence: NativeCompletionEvidence, completion: @escaping (Result<NativeChallengeSnapshot, Error>) -> Void)
+  /// [expectedStageActivation] is the activation the caller saw when it decided to confirm: a confirmation that arrives after the
+  /// stage changed fails with STALE_ACTIVATION instead of completing the next stage. Null: no check.
+  func confirm(sessionId: String, evidence: NativeCompletionEvidence, expectedStageActivation: Int64?, completion: @escaping (Result<NativeChallengeSnapshot, Error>) -> Void)
   /// Starts the next stage explicitly, after a stage completed (the transition time stays in the total).
   func nextStage(sessionId: String, completion: @escaping (Result<NativeChallengeSnapshot, Error>) -> Void)
   func pause(sessionId: String, completion: @escaping (Result<NativeChallengeSnapshot, Error>) -> Void)
@@ -623,8 +625,10 @@ protocol ChallengeHostApi {
   /// between two stages is never credited to the new one. Dropped when it is not for the open session.
   func submitCounter(sessionId: String, sourceId: String, epoch: Int64, meters: Double, ageMs: Int64) throws
   /// A delta of the current stage's metric from a source that counts for itself (reps, a station). [eventId] must be stable: the same
-  /// id is never counted twice, even across a restart.
-  func submitDelta(sessionId: String, sourceId: String, eventId: String, delta: Double, ageMs: Int64) throws
+  /// id is never counted twice, even across a restart. [stageActivation] is the activation of the stage the measurement was made for
+  /// (from a snapshot): a callback that arrives after the stage changed is dropped instead of advancing the next stage. Null: the
+  /// current stage.
+  func submitDelta(sessionId: String, sourceId: String, eventId: String, delta: Double, ageMs: Int64, stageActivation: Int64?) throws
   func snapshot(completion: @escaping (Result<NativeChallengeSnapshot, Error>) -> Void)
   /// Rebuilds [sessionId] from its journal after the process died. It comes back PAUSED (even when the definition forbids pausing:
   /// `recoveries` says so). A damaged journal is repaired ON DISK first (the damaged original is kept next to it).
@@ -664,13 +668,16 @@ class ChallengeHostApiSetup {
       startChannel.setMessageHandler(nil)
     }
     /// Confirms the active stage (a manual stage, a sensor-or-manual stage the sensor could not complete, a judged stage).
+    /// [expectedStageActivation] is the activation the caller saw when it decided to confirm: a confirmation that arrives after the
+    /// stage changed fails with STALE_ACTIVATION instead of completing the next stage. Null: no check.
     let confirmChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.flutter_challenge.ChallengeHostApi.confirm\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
     if let api = api {
       confirmChannel.setMessageHandler { message, reply in
         let args = message as! [Any?]
         let sessionIdArg = args[0] as! String
         let evidenceArg = args[1] as! NativeCompletionEvidence
-        api.confirm(sessionId: sessionIdArg, evidence: evidenceArg) { result in
+        let expectedStageActivationArg: Int64? = nilOrValue(args[2])
+        api.confirm(sessionId: sessionIdArg, evidence: evidenceArg, expectedStageActivation: expectedStageActivationArg) { result in
           switch result {
           case .success(let res):
             reply(wrapResult(res))
@@ -757,7 +764,9 @@ class ChallengeHostApiSetup {
       submitCounterChannel.setMessageHandler(nil)
     }
     /// A delta of the current stage's metric from a source that counts for itself (reps, a station). [eventId] must be stable: the same
-    /// id is never counted twice, even across a restart.
+    /// id is never counted twice, even across a restart. [stageActivation] is the activation of the stage the measurement was made for
+    /// (from a snapshot): a callback that arrives after the stage changed is dropped instead of advancing the next stage. Null: the
+    /// current stage.
     let submitDeltaChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.flutter_challenge.ChallengeHostApi.submitDelta\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
     if let api = api {
       submitDeltaChannel.setMessageHandler { message, reply in
@@ -767,8 +776,9 @@ class ChallengeHostApiSetup {
         let eventIdArg = args[2] as! String
         let deltaArg = args[3] as! Double
         let ageMsArg = args[4] as! Int64
+        let stageActivationArg: Int64? = nilOrValue(args[5])
         do {
-          try api.submitDelta(sessionId: sessionIdArg, sourceId: sourceIdArg, eventId: eventIdArg, delta: deltaArg, ageMs: ageMsArg)
+          try api.submitDelta(sessionId: sessionIdArg, sourceId: sourceIdArg, eventId: eventIdArg, delta: deltaArg, ageMs: ageMsArg, stageActivation: stageActivationArg)
           reply(wrapResult(nil))
         } catch {
           reply(wrapError(error))

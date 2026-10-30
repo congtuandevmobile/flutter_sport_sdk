@@ -23,10 +23,18 @@ abstract class SportBlePlatform {
 }
 
 /// Pigeon implementation: the host API for calls, the Flutter API for events.
+///
+/// There is ONE Flutter handler per engine: `SportBleFlutterApi.setUp` replaces the previous one, so a second instance would silence
+/// the first. `PigeonSportBlePlatform()` therefore returns the same shared instance every time (its streams are broadcast: every
+/// `SportBle` façade can listen). Only a test that passes its own [api] gets a separate instance.
 class PigeonSportBlePlatform implements SportBlePlatform, SportBleFlutterApi {
-  PigeonSportBlePlatform({SportBleHostApi? api}) : _api = api ?? SportBleHostApi() {
+  factory PigeonSportBlePlatform({SportBleHostApi? api}) => api == null ? _shared : PigeonSportBlePlatform._(api);
+
+  PigeonSportBlePlatform._(this._api) {
     SportBleFlutterApi.setUp(this);
   }
+
+  static final PigeonSportBlePlatform _shared = PigeonSportBlePlatform._(SportBleHostApi());
 
   final SportBleHostApi _api;
   final _devices = StreamController<SportDevice>.broadcast();

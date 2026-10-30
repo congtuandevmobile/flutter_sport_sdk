@@ -250,4 +250,15 @@ class LedgerTest {
         assertEquals(events.size, events.map { it.seq }.toSet().size)
         assertEquals(5, events.advances().size)
     }
+
+    @Test fun aCounterThatChangesAtTheSameInstantCreditsNothing() {
+        val l = ledger()
+        l.onCounter(foot, 1, 1200.0, 0)
+        l.onCounter(foot, 1, 1210.0, 3000)
+        val events = l.onCounter(foot, 1, 1214.0, 3000) // same timestamp: 0 s elapsed must not let the spike slack credit 4 m
+        assertEquals(10.0, l.distanceMeters, 1e-9)
+        assertTrue(events.advances().isEmpty())
+        l.onCounter(foot, 1, 1220.0, 6000) // the next real sample is still measured from the last credited one
+        assertEquals(20.0, l.distanceMeters, 1e-9)
+    }
 }

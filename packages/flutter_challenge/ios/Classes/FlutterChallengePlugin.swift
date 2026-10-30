@@ -53,8 +53,8 @@ public final class FlutterChallengePlugin: NSObject, FlutterPlugin, ChallengeHos
     func start(sessionId: String, definition: NativeChallengeDefinition, completion: @escaping (Result<NativeChallengeSnapshot, Error>) -> Void) {
         command(completion) { try $0.start(sessionId: sessionId, definition: definition) }
     }
-    func confirm(sessionId: String, evidence: NativeCompletionEvidence, completion: @escaping (Result<NativeChallengeSnapshot, Error>) -> Void) {
-        command(completion) { try $0.confirm(sessionId: sessionId, evidence: evidence) }
+    func confirm(sessionId: String, evidence: NativeCompletionEvidence, expectedStageActivation: Int64?, completion: @escaping (Result<NativeChallengeSnapshot, Error>) -> Void) {
+        command(completion) { try $0.confirm(sessionId: sessionId, evidence: evidence, expectedStageActivation: expectedStageActivation) }
     }
     func nextStage(sessionId: String, completion: @escaping (Result<NativeChallengeSnapshot, Error>) -> Void) {
         command(completion) { try $0.nextStage(sessionId: sessionId) }
@@ -84,9 +84,9 @@ public final class FlutterChallengePlugin: NSObject, FlutterPlugin, ChallengeHos
             self?.engine?.submitCounter(sessionId: sessionId, sourceId: sourceId, epoch: epoch, meters: meters, ageMs: ageMs)
         }
     }
-    func submitDelta(sessionId: String, sourceId: String, eventId: String, delta: Double, ageMs: Int64) throws {
+    func submitDelta(sessionId: String, sourceId: String, eventId: String, delta: Double, ageMs: Int64, stageActivation: Int64?) throws {
         calls.async { [weak self] in
-            self?.engine?.submitDelta(sessionId: sessionId, sourceId: sourceId, eventId: eventId, delta: delta, ageMs: ageMs)
+            self?.engine?.submitDelta(sessionId: sessionId, sourceId: sourceId, eventId: eventId, delta: delta, ageMs: ageMs, stageActivation: stageActivation)
         }
     }
 

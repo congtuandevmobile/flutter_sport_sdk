@@ -1,3 +1,7 @@
+## Unreleased
+
+* Fix: `PigeonSportBlePlatform()` is one shared instance per engine, so a second `SportBle` no longer silences the first.
+
 ## 0.0.1-beta (second pass)
 
 * **Readiness.** New connection states `discovering`, `subscribing`, `ready`, `notSupported` (replace `connected`). A device is `ready`

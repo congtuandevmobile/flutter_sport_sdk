@@ -121,6 +121,23 @@ void main() {
     expect(seen.single.distanceMeters, 123.5);
   });
 
+  test('two façades on the default platform share ONE handler and both receive the events', () async {
+    expect(identical(PigeonWorkoutPlatform(), PigeonWorkoutPlatform()), isTrue);
+    final a = FlutterWorkout();
+    final b = FlutterWorkout();
+    final seenA = <WorkoutSnapshot>[];
+    final seenB = <WorkoutSnapshot>[];
+    final subA = a.snapshots.listen(seenA.add);
+    b.snapshots.listen(seenB.add);
+    PigeonWorkoutPlatform().onSnapshot(host._snap());
+    await Future<void>.delayed(Duration.zero);
+    await subA.cancel(); // one consumer leaving does not silence the other
+    PigeonWorkoutPlatform().onSnapshot(host._snap());
+    await Future<void>.delayed(Duration.zero);
+    expect(seenA, hasLength(1));
+    expect(seenB, hasLength(2));
+  });
+
   test('a failed journal write is visible and means not durable', () {
     final s = WorkoutSnapshot(
       state: WorkoutState.running,

@@ -98,8 +98,10 @@ class ChallengeRunner(
         return publishedSnapshot()
     }
 
-    fun confirm(id: String, evidence: NativeCompletionEvidence): NativeChallengeSnapshot =
-        command(id) { s, at -> s.confirm(CompletionEvidence.valueOf(evidence.name), at) }
+    fun confirm(id: String, evidence: NativeCompletionEvidence, expectedStageActivation: Long? = null): NativeChallengeSnapshot =
+        command(id) { s, at ->
+            s.confirm(CompletionEvidence.valueOf(evidence.name), at, expectedStageActivation ?: ChallengeSession.CURRENT_ACTIVATION)
+        }
 
     fun nextStage(id: String): NativeChallengeSnapshot = command(id) { s, at -> s.nextStage(at) }
     fun pause(id: String): NativeChallengeSnapshot = command(id) { s, at -> s.pause(at) }
@@ -109,8 +111,10 @@ class ChallengeRunner(
         feed(id) { s, at -> s.onCounter(sourceId, epoch, meters, at - maxOf(0L, ageMs)) }
     }
 
-    fun submitDelta(id: String, sourceId: String, eventId: String, delta: Double, ageMs: Long) {
-        feed(id) { s, at -> s.onDelta(sourceId, eventId, delta, at - maxOf(0L, ageMs)) }
+    fun submitDelta(id: String, sourceId: String, eventId: String, delta: Double, ageMs: Long, stageActivation: Long? = null) {
+        feed(id) { s, at ->
+            s.onDelta(sourceId, eventId, delta, at - maxOf(0L, ageMs), stageActivation ?: ChallengeSession.CURRENT_ACTIVATION)
+        }
     }
 
     fun snapshot(): NativeChallengeSnapshot = synchronized(lock) { makeSnapshot() }
@@ -119,6 +123,10 @@ class ChallengeRunner(
     fun restore(id: String): NativeChallengeSnapshot {
         synchronized(lock) {
             if (sessionId == id && session != null) return makeSnapshot()
+            val open = session
+            if (open != null && open.currentState != ChallengeState.COMPLETED) { // restoring another one would replace the open challenge
+                throw ChallengeException("SESSION_OPEN", "challenge $sessionId is still open")
+            }
             val lines = try { store.read(id) } catch (e: IOException) { throw ChallengeException("RESTORE_FAILED", e.message ?: "I/O error") }
             val recovered = ChallengeJournal.recover(lines) ?: throw ChallengeException("NOT_RESTORABLE", "no usable journal for $id")
             val all = recovered.read.events + recovered.restored.recoveryEvents

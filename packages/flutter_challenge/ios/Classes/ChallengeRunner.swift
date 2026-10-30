@@ -98,9 +98,9 @@ final class ChallengeRunner {
         }
     }
 
-    func confirm(sessionId id: String, evidence: NativeCompletionEvidence) throws -> NativeChallengeSnapshot {
+    func confirm(sessionId id: String, evidence: NativeCompletionEvidence, expectedStageActivation: Int64? = nil) throws -> NativeChallengeSnapshot {
         try command(id) { s, at in
-            s.confirm(evidence: Self.coreEvidence(evidence), atMs: at)
+            s.confirm(evidence: Self.coreEvidence(evidence), atMs: at, expectedActivation: expectedStageActivation ?? Self.currentActivation)
         }
     }
     func nextStage(sessionId id: String) throws -> NativeChallengeSnapshot { try command(id) { $0.nextStage(atMs: $1) } }
@@ -111,9 +111,14 @@ final class ChallengeRunner {
         feed(id) { s, at in s.onCounter(sourceId: sourceId, epoch: epoch, counter: meters, atMs: at - max(0, ageMs)) }
     }
 
-    func submitDelta(sessionId id: String, sourceId: String, eventId: String, delta: Double, ageMs: Int64) {
-        feed(id) { s, at in s.onDelta(sourceId: sourceId, eventId: eventId, delta: delta, atMs: at - max(0, ageMs)) }
+    func submitDelta(sessionId id: String, sourceId: String, eventId: String, delta: Double, ageMs: Int64, stageActivation: Int64? = nil) {
+        feed(id) { s, at in
+            s.onDelta(sourceId: sourceId, eventId: eventId, delta: delta, atMs: at - max(0, ageMs), stageActivation: stageActivation ?? Self.currentActivation)
+        }
     }
+
+    /// `ChallengeSession.CURRENT_ACTIVATION`: "the stage that is active now" (the host did not say which activation it saw).
+    private static let currentActivation: Int64 = -1
 
     func snapshot() -> NativeChallengeSnapshot { queue.sync { makeSnapshot() } }
 
@@ -121,6 +126,9 @@ final class ChallengeRunner {
     func restore(sessionId id: String) throws -> NativeChallengeSnapshot {
         try queue.sync {
             if sessionId == id, session != nil { return makeSnapshot() }
+            if let open = session, open.currentState != .completed { // restoring another one would replace the open challenge
+                throw ChallengeError(code: "SESSION_OPEN", message: "challenge \(sessionId ?? "") is still open")
+            }
             let lines: [String]
             do { lines = try store.read(sessionId: id) } catch {
                 throw ChallengeError(code: "RESTORE_FAILED", message: error.localizedDescription)

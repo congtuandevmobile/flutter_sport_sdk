@@ -131,8 +131,10 @@ abstract class ChallengeHostApi {
   NativeChallengeSnapshot start(String sessionId, NativeChallengeDefinition definition);
 
   /// Confirms the active stage (a manual stage, a sensor-or-manual stage the sensor could not complete, a judged stage).
+  /// [expectedStageActivation] is the activation the caller saw when it decided to confirm: a confirmation that arrives after the
+  /// stage changed fails with STALE_ACTIVATION instead of completing the next stage. Null: no check.
   @async
-  NativeChallengeSnapshot confirm(String sessionId, NativeCompletionEvidence evidence);
+  NativeChallengeSnapshot confirm(String sessionId, NativeCompletionEvidence evidence, int? expectedStageActivation);
 
   /// Starts the next stage explicitly, after a stage completed (the transition time stays in the total).
   @async
@@ -149,8 +151,10 @@ abstract class ChallengeHostApi {
   void submitCounter(String sessionId, String sourceId, int epoch, double meters, int ageMs);
 
   /// A delta of the current stage's metric from a source that counts for itself (reps, a station). [eventId] must be stable: the same
-  /// id is never counted twice, even across a restart.
-  void submitDelta(String sessionId, String sourceId, String eventId, double delta, int ageMs);
+  /// id is never counted twice, even across a restart. [stageActivation] is the activation of the stage the measurement was made for
+  /// (from a snapshot): a callback that arrives after the stage changed is dropped instead of advancing the next stage. Null: the
+  /// current stage.
+  void submitDelta(String sessionId, String sourceId, String eventId, double delta, int ageMs, int? stageActivation);
 
   @async
   NativeChallengeSnapshot snapshot();

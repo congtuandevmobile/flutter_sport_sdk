@@ -116,6 +116,7 @@ class DistanceLedger(
             baseline(track, meters, atMs, out)
             return out
         }
+        if (atMs <= track.lastAtMs) return out // the same instant twice: elapsed time 0 would let the spike slack credit metres
         val elapsedMs = atMs - track.lastAtMs
         val delta = meters - track.lastValue
         track.lastAtMs = atMs

@@ -45,7 +45,8 @@ class FakeHost extends ChallengeHostApi {
   }
 
   @override
-  Future<NativeChallengeSnapshot> confirm(String sessionId, NativeCompletionEvidence evidence) => _go('confirm:${evidence.name}', _snap);
+  Future<NativeChallengeSnapshot> confirm(String sessionId, NativeCompletionEvidence evidence, int? expectedStageActivation) =>
+      _go('confirm:${evidence.name}:$expectedStageActivation', _snap);
   @override
   Future<NativeChallengeSnapshot> nextStage(String sessionId) => _go('next', _snap);
   @override
@@ -56,8 +57,8 @@ class FakeHost extends ChallengeHostApi {
   Future<void> submitCounter(String sessionId, String sourceId, int epoch, double meters, int ageMs) =>
       _go('counter:$sourceId:$epoch:$meters:$ageMs', () {});
   @override
-  Future<void> submitDelta(String sessionId, String sourceId, String eventId, double delta, int ageMs) =>
-      _go('delta:$sourceId:$eventId:$delta:$ageMs', () {});
+  Future<void> submitDelta(String sessionId, String sourceId, String eventId, double delta, int ageMs, int? stageActivation) =>
+      _go('delta:$sourceId:$eventId:$delta:$ageMs:$stageActivation', () {});
   @override
   Future<NativeChallengeSnapshot> snapshot() => _go('snapshot', _snap);
   @override
@@ -118,18 +119,20 @@ void main() {
   });
 
   test('commands and samples reach native with their arguments, ages in milliseconds', () async {
-    await challenge.confirm('s1', CompletionEvidence.judge);
+    await challenge.confirm('s1', CompletionEvidence.judge, expectedStageActivation: 4);
     await challenge.nextStage('s1');
     await challenge.pause('s1');
     await challenge.resume('s1');
     await challenge.submitCounter('s1', 'gps-primary', 1204.5, epoch: 3, age: const Duration(milliseconds: 800));
-    await challenge.submitDelta('s1', 'manual', 'tap-1', 5, age: const Duration(milliseconds: 20));
+    await challenge.submitDelta('s1', 'manual', 'tap-1', 5, age: const Duration(milliseconds: 20), stageActivation: 4);
+    await challenge.submitDelta('s1', 'manual', 'tap-2', 1);
     await challenge.restore('s1');
     await challenge.clearSession('s1');
     expect(host.calls, [
-      'confirm:judge', 'next', 'pause', 'resume',
+      'confirm:judge:4', 'next', 'pause', 'resume',
       'counter:gps-primary:3:1204.5:800',
-      'delta:manual:tap-1:5.0:20',
+      'delta:manual:tap-1:5.0:20:4',
+      'delta:manual:tap-2:1.0:0:null',
       'restore', 'clear',
     ]);
     expect(await challenge.activeSessionId(), 's1');
@@ -166,6 +169,23 @@ void main() {
     platform.onSnapshot(host._snap());
     await Future<void>.delayed(Duration.zero);
     expect(seen.single.lastSeq, 17);
+  });
+
+  test('two façades on the default platform share ONE handler and both receive the events', () async {
+    expect(identical(PigeonChallengePlatform(), PigeonChallengePlatform()), isTrue);
+    final a = FlutterChallenge();
+    final b = FlutterChallenge();
+    final seenA = <ChallengeSnapshot>[];
+    final seenB = <ChallengeSnapshot>[];
+    final subA = a.snapshots.listen(seenA.add);
+    b.snapshots.listen(seenB.add);
+    PigeonChallengePlatform().onSnapshot(host._snap());
+    await Future<void>.delayed(Duration.zero);
+    await subA.cancel(); // one consumer leaving does not silence the other
+    PigeonChallengePlatform().onSnapshot(host._snap());
+    await Future<void>.delayed(Duration.zero);
+    expect(seenA, hasLength(1));
+    expect(seenB, hasLength(2));
   });
 
   test('every native enum has its Dart twin in the same order', () {

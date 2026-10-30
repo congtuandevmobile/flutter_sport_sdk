@@ -22,10 +22,18 @@ abstract class WorkoutPlatform {
 }
 
 /// Pigeon implementation: the host API for calls, the Flutter API for events.
+///
+/// There is ONE Flutter handler per engine: `WorkoutFlutterApi.setUp` replaces the previous one, so a second instance would silence
+/// the first. `PigeonWorkoutPlatform()` therefore returns the same shared instance every time (its streams are broadcast: every
+/// `FlutterWorkout` façade can listen). Only a test that passes its own [api] gets a separate instance.
 class PigeonWorkoutPlatform implements WorkoutPlatform, WorkoutFlutterApi {
-  PigeonWorkoutPlatform({WorkoutHostApi? api}) : _api = api ?? WorkoutHostApi() {
+  factory PigeonWorkoutPlatform({WorkoutHostApi? api}) => api == null ? _shared : PigeonWorkoutPlatform._(api);
+
+  PigeonWorkoutPlatform._(this._api) {
     WorkoutFlutterApi.setUp(this);
   }
+
+  static final PigeonWorkoutPlatform _shared = PigeonWorkoutPlatform._(WorkoutHostApi());
 
   final WorkoutHostApi _api;
   final _snapshots = StreamController<WorkoutSnapshot>.broadcast();

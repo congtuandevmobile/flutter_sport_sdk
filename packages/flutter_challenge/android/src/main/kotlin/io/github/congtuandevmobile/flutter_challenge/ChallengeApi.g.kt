@@ -648,8 +648,12 @@ interface ChallengeHostApi {
    * the write. A command the rules refuse fails with the reason as its code (WRONG_STATE, NOT_ALLOWED, PAUSE_NOT_ALLOWED, ...).
    */
   fun start(sessionId: String, definition: NativeChallengeDefinition, callback: (Result<NativeChallengeSnapshot>) -> Unit)
-  /** Confirms the active stage (a manual stage, a sensor-or-manual stage the sensor could not complete, a judged stage). */
-  fun confirm(sessionId: String, evidence: NativeCompletionEvidence, callback: (Result<NativeChallengeSnapshot>) -> Unit)
+  /**
+   * Confirms the active stage (a manual stage, a sensor-or-manual stage the sensor could not complete, a judged stage).
+   * [expectedStageActivation] is the activation the caller saw when it decided to confirm: a confirmation that arrives after the
+   * stage changed fails with STALE_ACTIVATION instead of completing the next stage. Null: no check.
+   */
+  fun confirm(sessionId: String, evidence: NativeCompletionEvidence, expectedStageActivation: Long?, callback: (Result<NativeChallengeSnapshot>) -> Unit)
   /** Starts the next stage explicitly, after a stage completed (the transition time stays in the total). */
   fun nextStage(sessionId: String, callback: (Result<NativeChallengeSnapshot>) -> Unit)
   fun pause(sessionId: String, callback: (Result<NativeChallengeSnapshot>) -> Unit)
@@ -662,9 +666,11 @@ interface ChallengeHostApi {
   fun submitCounter(sessionId: String, sourceId: String, epoch: Long, meters: Double, ageMs: Long)
   /**
    * A delta of the current stage's metric from a source that counts for itself (reps, a station). [eventId] must be stable: the same
-   * id is never counted twice, even across a restart.
+   * id is never counted twice, even across a restart. [stageActivation] is the activation of the stage the measurement was made for
+   * (from a snapshot): a callback that arrives after the stage changed is dropped instead of advancing the next stage. Null: the
+   * current stage.
    */
-  fun submitDelta(sessionId: String, sourceId: String, eventId: String, delta: Double, ageMs: Long)
+  fun submitDelta(sessionId: String, sourceId: String, eventId: String, delta: Double, ageMs: Long, stageActivation: Long?)
   fun snapshot(callback: (Result<NativeChallengeSnapshot>) -> Unit)
   /**
    * Rebuilds [sessionId] from its journal after the process died. It comes back PAUSED (even when the definition forbids pausing:
@@ -713,7 +719,8 @@ interface ChallengeHostApi {
             val args = message as List<Any?>
             val sessionIdArg = args[0] as String
             val evidenceArg = args[1] as NativeCompletionEvidence
-            api.confirm(sessionIdArg, evidenceArg) { result: Result<NativeChallengeSnapshot> ->
+            val expectedStageActivationArg = args[2] as Long?
+            api.confirm(sessionIdArg, evidenceArg, expectedStageActivationArg) { result: Result<NativeChallengeSnapshot> ->
               val error = result.exceptionOrNull()
               if (error != null) {
                 reply.reply(ChallengeApiPigeonUtils.wrapError(error))
@@ -819,8 +826,9 @@ interface ChallengeHostApi {
             val eventIdArg = args[2] as String
             val deltaArg = args[3] as Double
             val ageMsArg = args[4] as Long
+            val stageActivationArg = args[5] as Long?
             val wrapped: List<Any?> = try {
-              api.submitDelta(sessionIdArg, sourceIdArg, eventIdArg, deltaArg, ageMsArg)
+              api.submitDelta(sessionIdArg, sourceIdArg, eventIdArg, deltaArg, ageMsArg, stageActivationArg)
               listOf(null)
             } catch (exception: Throwable) {
               ChallengeApiPigeonUtils.wrapError(exception)

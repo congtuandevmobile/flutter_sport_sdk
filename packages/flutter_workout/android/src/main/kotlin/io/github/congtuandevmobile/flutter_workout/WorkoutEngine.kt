@@ -123,6 +123,10 @@ class WorkoutEngine(
     fun restore(id: String): NativeWorkoutSnapshot {
         synchronized(lock) {
             if (sessionId == id && session != null) return makeSnapshot()
+            val open = session
+            if (open != null && (open.currentState == WorkoutState.RUNNING || open.currentState == WorkoutState.PAUSED)) {
+                throw WorkoutException("SESSION_OPEN", "workout $sessionId is still open") // restoring another one would replace it
+            }
             val lines = try { store.read(id) } catch (e: IOException) { throw WorkoutException("RESTORE_FAILED", e.message ?: "I/O error") }
             val recovered = WorkoutJournal.recover(lines) ?: throw WorkoutException("NOT_RESTORABLE", "no usable journal for $id")
             val all = recovered.read.events + recovered.restored.recoveryEvents

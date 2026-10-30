@@ -135,6 +135,9 @@ final class WorkoutEngine {
     func restore(sessionId id: String) throws -> NativeWorkoutSnapshot {
         try queue.sync {
             if sessionId == id, session != nil { return makeSnapshot() }
+            if let open = session, open.currentState == .running || open.currentState == .paused { // restoring another one would replace it
+                throw WorkoutError(code: "SESSION_OPEN", message: "workout \(sessionId ?? "") is still open")
+            }
             let lines: [String]
             do { lines = try store.read(sessionId: id) } catch {
                 throw WorkoutError(code: "RESTORE_FAILED", message: error.localizedDescription)

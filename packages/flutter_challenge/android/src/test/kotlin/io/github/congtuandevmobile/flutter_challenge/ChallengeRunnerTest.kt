@@ -338,6 +338,42 @@ class ChallengeRunnerTest {
     }
 
     @Test
+    fun restoringAnotherChallengeWhileOneIsOpenIsRefusedAndChangesNothing() = runTest {
+        val d = NativeChallengeDefinition("x", 1, true, listOf(stage("a", NativeProgressMetric.REPS, 1.0, NativeCompletionPolicy.AUTO, "m")))
+        val other = runner()
+        other.start("b", d)
+        other.submitDelta("b", "m", "1", 1.0, 0) // b is completed: its journal is restorable
+        val r = runner()
+        r.start("s1", def)
+        assertEquals("SESSION_OPEN", assertFailsWith<ChallengeException> { r.restore("b") }.code)
+        assertEquals("s1", r.activeSessionId())
+        assertEquals("run-1", r.snapshot().stageId, "s1 is still the open challenge")
+        assertEquals("run-1", r.restore("s1").stageId, "restoring the open one itself is still fine")
+    }
+
+    @Test
+    fun aTapOrConfirmationMadeForAnOldStageIsRefusedOrDropped() = runTest {
+        val d = NativeChallengeDefinition(
+            "x", 1, true,
+            listOf(
+                stage("a", NativeProgressMetric.REPS, 2.0, NativeCompletionPolicy.MANUAL, "tap"),
+                stage("b", NativeProgressMetric.REPS, 2.0, NativeCompletionPolicy.MANUAL, "tap"),
+            ),
+        )
+        val r = runner()
+        val first = r.start("s1", d)
+        r.submitDelta("s1", "tap", "t1", 2.0, 0, first.stageActivation)
+        r.confirm("s1", NativeCompletionEvidence.MANUAL, first.stageActivation)
+        r.nextStage("s1")
+        r.submitDelta("s1", "tap", "t2", 1.0, 0, first.stageActivation) // the callback of stage a, in stage b
+        assertEquals(0.0, r.snapshot().stageProgress, 1e-9)
+        assertEquals("STALE_ACTIVATION", assertFailsWith<ChallengeException> { r.confirm("s1", NativeCompletionEvidence.MANUAL, first.stageActivation) }.code)
+        assertEquals(NativeChallengeState.ACTIVE, r.snapshot().state)
+        r.submitDelta("s1", "tap", "t3", 1.0, 0, r.snapshot().stageActivation)
+        assertEquals(1.0, r.snapshot().stageProgress, 1e-9)
+    }
+
+    @Test
     fun theSnapshotIsPublishedAboutOncePerSecond() = runTest {
         val r = runner()
         r.start()

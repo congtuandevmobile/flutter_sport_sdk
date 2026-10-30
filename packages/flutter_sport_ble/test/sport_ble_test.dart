@@ -158,6 +158,23 @@ void main() {
     expect(stops, 1);
   });
 
+  test('two façades on the default platform share ONE handler and both receive the events', () async {
+    expect(identical(PigeonSportBlePlatform(), PigeonSportBlePlatform()), isTrue);
+    final a = SportBle();
+    final b = SportBle();
+    final seenA = <SensorSnapshot>[];
+    final seenB = <SensorSnapshot>[];
+    final subA = a.snapshots.listen(seenA.add);
+    b.snapshots.listen(seenB.add);
+    PigeonSportBlePlatform().onSnapshot(_native());
+    await Future<void>.delayed(Duration.zero);
+    await subA.cancel(); // one consumer leaving does not silence the other
+    PigeonSportBlePlatform().onSnapshot(_native());
+    await Future<void>.delayed(Duration.zero);
+    expect(seenA, hasLength(1));
+    expect(seenB, hasLength(2));
+  });
+
   test('a failed connect throws a SportBleException with the native code', () async {
     host.connectError = PlatformExceptionLike('TIMEOUT', 'the device did not answer in time');
     await expectLater(

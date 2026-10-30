@@ -29,7 +29,11 @@ class FlutterChallenge {
       _platform.start(sessionId, definition);
 
   /// Confirms the active stage. A command the rules refuse throws with the reason as the code (`NOT_ALLOWED`, `WRONG_STATE`, ...).
-  Future<ChallengeSnapshot> confirm(String sessionId, CompletionEvidence evidence) => _platform.confirm(sessionId, evidence);
+  ///
+  /// Pass [expectedStageActivation] (`snapshot.stageActivation` of the stage you are confirming) so that a confirmation that arrives
+  /// late, after the stage changed, fails with `STALE_ACTIVATION` instead of completing the next stage.
+  Future<ChallengeSnapshot> confirm(String sessionId, CompletionEvidence evidence, {int? expectedStageActivation}) =>
+      _platform.confirm(sessionId, evidence, expectedStageActivation);
 
   /// Starts the next stage after one completed (the transition time stays in the total).
   Future<ChallengeSnapshot> nextStage(String sessionId) => _platform.nextStage(sessionId);
@@ -49,13 +53,17 @@ class FlutterChallenge {
 
   /// A delta of the current stage's metric from a source that counts for itself. [eventId] must be stable: the same id is never counted
   /// twice, even across a restart.
+  ///
+  /// Pass [stageActivation] (`snapshot.stageActivation` when the measurement was made): a tap whose callback arrives after the stage
+  /// changed is then dropped instead of advancing the next stage. Without it, the delta counts for whatever stage is current.
   Future<void> submitDelta(
     String sessionId,
     String sourceId,
     String eventId,
     double delta, {
     Duration age = Duration.zero,
-  }) => _platform.submitDelta(sessionId, sourceId, eventId, delta, age);
+    int? stageActivation,
+  }) => _platform.submitDelta(sessionId, sourceId, eventId, delta, age, stageActivation);
 
   Future<ChallengeSnapshot> snapshot() => _platform.snapshot();
 

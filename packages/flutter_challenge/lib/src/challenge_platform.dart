@@ -9,12 +9,12 @@ abstract class ChallengePlatform {
   Stream<ChallengeSnapshot> get snapshots;
 
   Future<ChallengeSnapshot> start(String sessionId, ChallengeDefinition definition);
-  Future<ChallengeSnapshot> confirm(String sessionId, CompletionEvidence evidence);
+  Future<ChallengeSnapshot> confirm(String sessionId, CompletionEvidence evidence, int? expectedStageActivation);
   Future<ChallengeSnapshot> nextStage(String sessionId);
   Future<ChallengeSnapshot> pause(String sessionId);
   Future<ChallengeSnapshot> resume(String sessionId);
   Future<void> submitCounter(String sessionId, String sourceId, int epoch, double meters, Duration age);
-  Future<void> submitDelta(String sessionId, String sourceId, String eventId, double delta, Duration age);
+  Future<void> submitDelta(String sessionId, String sourceId, String eventId, double delta, Duration age, int? stageActivation);
   Future<ChallengeSnapshot> snapshot();
   Future<ChallengeSnapshot> restore(String sessionId);
   Future<String?> activeSessionId();
@@ -22,10 +22,18 @@ abstract class ChallengePlatform {
 }
 
 /// Pigeon implementation: the host API for calls, the Flutter API for events.
+///
+/// There is ONE Flutter handler per engine: `ChallengeFlutterApi.setUp` replaces the previous one, so a second instance would silence
+/// the first. `PigeonChallengePlatform()` therefore returns the same shared instance every time (its streams are broadcast: every
+/// `FlutterChallenge` façade can listen). Only a test that passes its own [api] gets a separate instance.
 class PigeonChallengePlatform implements ChallengePlatform, ChallengeFlutterApi {
-  PigeonChallengePlatform({ChallengeHostApi? api}) : _api = api ?? ChallengeHostApi() {
+  factory PigeonChallengePlatform({ChallengeHostApi? api}) => api == null ? _shared : PigeonChallengePlatform._(api);
+
+  PigeonChallengePlatform._(this._api) {
     ChallengeFlutterApi.setUp(this);
   }
+
+  static final PigeonChallengePlatform _shared = PigeonChallengePlatform._(ChallengeHostApi());
 
   final ChallengeHostApi _api;
   final _snapshots = StreamController<ChallengeSnapshot>.broadcast();
@@ -69,8 +77,9 @@ class PigeonChallengePlatform implements ChallengePlatform, ChallengeFlutterApi 
   );
 
   @override
-  Future<ChallengeSnapshot> confirm(String sessionId, CompletionEvidence evidence) =>
-      _guard(() async => _snapshot(await _api.confirm(sessionId, NativeCompletionEvidence.values[evidence.index])));
+  Future<ChallengeSnapshot> confirm(String sessionId, CompletionEvidence evidence, int? expectedStageActivation) => _guard(
+    () async => _snapshot(await _api.confirm(sessionId, NativeCompletionEvidence.values[evidence.index], expectedStageActivation)),
+  );
 
   @override
   Future<ChallengeSnapshot> nextStage(String sessionId) => _guard(() async => _snapshot(await _api.nextStage(sessionId)));
@@ -86,8 +95,8 @@ class PigeonChallengePlatform implements ChallengePlatform, ChallengeFlutterApi 
       _guard(() => _api.submitCounter(sessionId, sourceId, epoch, meters, age.inMilliseconds));
 
   @override
-  Future<void> submitDelta(String sessionId, String sourceId, String eventId, double delta, Duration age) =>
-      _guard(() => _api.submitDelta(sessionId, sourceId, eventId, delta, age.inMilliseconds));
+  Future<void> submitDelta(String sessionId, String sourceId, String eventId, double delta, Duration age, int? stageActivation) =>
+      _guard(() => _api.submitDelta(sessionId, sourceId, eventId, delta, age.inMilliseconds, stageActivation));
 
   @override
   Future<ChallengeSnapshot> snapshot() => _guard(() async => _snapshot(await _api.snapshot()));

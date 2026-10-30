@@ -73,8 +73,9 @@ class FlutterChallengePlugin : FlutterPlugin, ChallengeHostApi, ChallengeSink {
 
     override fun start(sessionId: String, definition: NativeChallengeDefinition, callback: (Result<NativeChallengeSnapshot>) -> Unit) =
         command(callback) { it.start(sessionId, definition) }
-    override fun confirm(sessionId: String, evidence: NativeCompletionEvidence, callback: (Result<NativeChallengeSnapshot>) -> Unit) =
-        command(callback) { it.confirm(sessionId, evidence) }
+    override fun confirm(
+        sessionId: String, evidence: NativeCompletionEvidence, expectedStageActivation: Long?, callback: (Result<NativeChallengeSnapshot>) -> Unit,
+    ) = command(callback) { it.confirm(sessionId, evidence, expectedStageActivation) }
     override fun nextStage(sessionId: String, callback: (Result<NativeChallengeSnapshot>) -> Unit) =
         command(callback) { it.nextStage(sessionId) }
     override fun pause(sessionId: String, callback: (Result<NativeChallengeSnapshot>) -> Unit) =
@@ -92,8 +93,8 @@ class FlutterChallengePlugin : FlutterPlugin, ChallengeHostApi, ChallengeSink {
         executor?.execute { runner?.submitCounter(sessionId, sourceId, epoch, meters, ageMs) }
     }
 
-    override fun submitDelta(sessionId: String, sourceId: String, eventId: String, delta: Double, ageMs: Long) {
-        executor?.execute { runner?.submitDelta(sessionId, sourceId, eventId, delta, ageMs) }
+    override fun submitDelta(sessionId: String, sourceId: String, eventId: String, delta: Double, ageMs: Long, stageActivation: Long?) {
+        executor?.execute { runner?.submitDelta(sessionId, sourceId, eventId, delta, ageMs, stageActivation) }
     }
 
     override fun onSnapshot(snapshot: NativeChallengeSnapshot) {
