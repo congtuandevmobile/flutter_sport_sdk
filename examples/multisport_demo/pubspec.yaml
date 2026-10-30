@@ -1,0 +1,25 @@
+name: multisport_demo
+description: "Create a multisport challenge (a sport and a goal per stage), run it with simulated sensors, and see the result of every stage."
+publish_to: 'none'
+version: 1.0.0+1
+
+resolution: workspace
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_challenge:
+    path: ../../packages/flutter_challenge
+  flutter_multisport:
+    path: ../../packages/flutter_multisport
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

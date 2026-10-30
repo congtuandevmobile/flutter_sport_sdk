@@ -1,0 +1,19 @@
+name: flutter_activity
+description: "Record one activity from the sensors: heart rate, cadence, speed and distance with the time each was measured, kept durably, and turned into a summary (averages, maxima, pace, how much of the activity each sensor really covered). Pure Dart; knows neither GPS nor Bluetooth."
+version: 0.0.1-beta
+repository: https://github.com/congtuandevmobile/flutter_sport_sdk
+resolution: workspace
+
+environment:
+  sdk: ^3.10.7
+  flutter: '>=3.3.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  meta: ^1.17.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0

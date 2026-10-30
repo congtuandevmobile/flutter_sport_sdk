@@ -13,7 +13,7 @@ import 'package:pigeon/pigeon.dart';
 
 /// Order matches `challenge.model.ProgressMetric` of the shared core (a test of each engine fails if it drifts).
 /// APPEND ONLY. `duration`: the stage's goal is TIME (target in seconds, the engine completes it by its own clock; no sources).
-enum NativeProgressMetric { runMeters, rowMeters, skiMeters, sledMeters, swimMeters, reps, duration }
+enum NativeProgressMetric { runMeters, rowMeters, skiMeters, sledMeters, swimMeters, reps, duration, cycleMeters }
 
 /// Order matches `challenge.model.CompletionPolicy`.
 enum NativeCompletionPolicy { auto, manual, sensorOrManual, judgeRequired }

@@ -10,7 +10,11 @@ packages/flutter_tracking_gps   GPS recording; owns tracking-core/ (Kotlin Multi
 packages/flutter_sport_ble      Bluetooth LE transport (Android/iOS native); owns sensor-core/ (parsers, per-metric resolver, SensorHub)
 packages/flutter_workout        a workout session (native, journal on disk); owns workout-core/ (session, distance ledger, journal)
 packages/flutter_challenge      a challenge session (native, own journal); owns challenge-core/ (event-sourced stages, journal, recovery)
+packages/flutter_activity       records ONE activity from sources: history of HR/cadence/speed/distance, summary (pure Dart; knows neither GPS nor BLE)
+packages/flutter_multisport     sports/goals catalog, coordinator, per-stage results (pure Dart; depends on flutter_challenge and flutter_activity)
+packages/flutter_multisport_adapters  GPS and BLE as sources for flutter_activity / flutter_multisport (depends on gps, ble and activity)
 examples/sensors_demo           one app with the plugins (a link/launch check)
+examples/multisport_demo        create and run a multisport challenge with simulated sensors
 ```
 
 Every package OWNS its core (`<name>-core/` inside the package) so it can be packaged, versioned, tested and released alone. A core

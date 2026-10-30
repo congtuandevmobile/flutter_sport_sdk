@@ -1,0 +1,21 @@
+name: flutter_multisport
+description: "Multisport challenges for Flutter: a catalog of sports and goals (a distance or a time per sport), a coordinator that feeds measurements into a challenge and moves between stages, and per-stage telemetry and results that survive the process dying."
+version: 0.0.1-beta
+repository: https://github.com/congtuandevmobile/flutter_sport_sdk
+resolution: workspace
+
+environment:
+  sdk: ^3.10.7
+  flutter: '>=3.3.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_activity: ^0.0.1-beta
+  flutter_challenge: ^0.0.1-beta
+  meta: ^1.17.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0

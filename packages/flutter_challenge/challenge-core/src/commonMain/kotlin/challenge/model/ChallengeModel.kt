@@ -15,6 +15,9 @@ enum class ProgressMetric(val maxRatePerSecond: Double) {
      * APPEND ONLY: the order is the order of the Pigeon enum.
      */
     DURATION(1.0),
+
+    /** Metres on a bike (APPEND ONLY). A bike is faster than a runner: its own rate limit (30 m/s) keeps a real ride from looking like a jump. */
+    CYCLE_METERS(30.0),
 }
 
 /** How a stage is completed. */

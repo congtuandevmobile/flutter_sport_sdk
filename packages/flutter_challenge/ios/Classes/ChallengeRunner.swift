@@ -333,6 +333,7 @@ final class ChallengeRunner {
         case .swimMeters: return .swimMeters
         case .reps: return .reps
         case .duration: return .duration
+        case .cycleMeters: return .cycleMeters
         }
     }
 

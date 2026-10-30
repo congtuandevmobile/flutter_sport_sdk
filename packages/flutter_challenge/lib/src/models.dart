@@ -5,7 +5,7 @@ import 'package:meta/meta.dart';
 ///
 /// [duration] is not a measurement: the goal of the stage is TIME. Its `target` is in seconds, the engine completes the stage by its
 /// own clock (a pause is not counted), and no source feeds it, so `allowedSources` may be empty.
-enum ProgressMetric { runMeters, rowMeters, skiMeters, sledMeters, swimMeters, reps, duration }
+enum ProgressMetric { runMeters, rowMeters, skiMeters, sledMeters, swimMeters, reps, duration, cycleMeters }
 
 /// How a stage is completed.
 enum CompletionPolicy {

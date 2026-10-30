@@ -206,7 +206,8 @@ enum class NativeProgressMetric(val raw: Int) {
   SLED_METERS(3),
   SWIM_METERS(4),
   REPS(5),
-  DURATION(6);
+  DURATION(6),
+  CYCLE_METERS(7);
 
   companion object {
     fun ofRaw(raw: Int): NativeProgressMetric? {

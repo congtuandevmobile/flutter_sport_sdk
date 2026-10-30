@@ -32,6 +32,26 @@ jobs:
         run: |
           flutter analyze
           flutter test
+      - name: flutter_activity
+        working-directory: packages/flutter_activity
+        run: |
+          flutter analyze
+          flutter test
+      - name: flutter_multisport
+        working-directory: packages/flutter_multisport
+        run: |
+          flutter analyze
+          flutter test
+      - name: flutter_multisport_adapters
+        working-directory: packages/flutter_multisport_adapters
+        run: |
+          flutter analyze
+          flutter test
+      - name: multisport_demo
+        working-directory: examples/multisport_demo
+        run: |
+          flutter analyze
+          flutter test
       - name: sensors_demo
         working-directory: examples/sensors_demo
         run: |

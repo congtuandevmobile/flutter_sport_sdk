@@ -10,4 +10,8 @@ workspace:
   - packages/flutter_sport_ble
   - packages/flutter_workout
   - packages/flutter_challenge
+  - packages/flutter_activity
+  - packages/flutter_multisport
+  - packages/flutter_multisport_adapters
   - examples/sensors_demo
+  - examples/multisport_demo

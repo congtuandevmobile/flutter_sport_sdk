@@ -188,6 +188,7 @@ enum NativeProgressMetric: Int {
   case swimMeters = 4
   case reps = 5
   case duration = 6
+  case cycleMeters = 7
 }
 
 /// Order matches `challenge.model.CompletionPolicy`.

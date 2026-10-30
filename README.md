@@ -9,6 +9,9 @@ Generic Flutter SDKs for sport apps, in one workspace.
 | [`flutter_workout`](packages/flutter_workout) | A workout session on top of `workout-core`: one distance, a journal on disk that is written before it is shown, restore after the process dies | new, beta, not fed by the sensor plugins by itself |
 | [`packages/flutter_challenge/challenge-core`](packages/flutter_challenge/challenge-core) | Kotlin core of a multi-stage challenge: event-sourced engine, stage counters, journal with CRC and recovery | new |
 | [`flutter_challenge`](packages/flutter_challenge) | A challenge session (Android/iOS native, journal on disk) on top of `challenge-core`; works without Bluetooth | new, beta, not wired into the demo |
+| [`flutter_activity`](packages/flutter_activity) | Record one activity from the sensors (heart rate, cadence, speed, distance with the time each was measured), keep the history durably, summarise it (averages, pace, how much each sensor covered). Pure Dart | new, beta, not tested with real devices |
+| [`flutter_multisport`](packages/flutter_multisport) | Multisport challenges above `flutter_challenge`: a sport catalog (distance, time or repetitions per stage), a coordinator that runs the stages, per-stage telemetry and results. Pure Dart | new, beta, not tested with real sensors |
+| [`flutter_multisport_adapters`](packages/flutter_multisport_adapters) | Feeds `flutter_multisport` from `flutter_tracking_gps` and `flutter_sport_ble` | new, beta |
 | [`flutter_sport_ble`](packages/flutter_sport_ble) | Bluetooth LE sport sensors: several devices at once, one resolved value per metric | new, beta |
 | [`packages/flutter_sport_ble/sensor-core`](packages/flutter_sport_ble/sensor-core) | Kotlin core of the sensors: protocol registry and adapters (heart rate, running and cycling speed/cadence, cycling power, fitness machines, battery, device information), per-metric resolver with a source policy | new |
 

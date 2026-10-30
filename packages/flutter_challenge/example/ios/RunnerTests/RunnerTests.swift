@@ -312,9 +312,10 @@ final class RunnerTests: XCTestCase {
     }
 
     func testEveryEnumOfTheCoreHasItsPigeonTwinInTheSameOrder() {
-        XCTAssertEqual(ProgressMetric.values().size, Int32(NativeProgressMetric.duration.rawValue + 1))
+        XCTAssertEqual(ProgressMetric.values().size, Int32(NativeProgressMetric.cycleMeters.rawValue + 1))
         XCTAssertEqual(ProgressMetric.reps.ordinal, Int32(NativeProgressMetric.reps.rawValue))
         XCTAssertEqual(ProgressMetric.duration.ordinal, Int32(NativeProgressMetric.duration.rawValue))
+        XCTAssertEqual(ProgressMetric.cycleMeters.ordinal, Int32(NativeProgressMetric.cycleMeters.rawValue))
         XCTAssertEqual(CompletionPolicy.judgeRequired.ordinal, Int32(NativeCompletionPolicy.judgeRequired.rawValue))
         XCTAssertEqual(ChallengeState.paused.ordinal, Int32(NativeChallengeState.paused.rawValue))
         XCTAssertEqual(ChallengeState.completed.ordinal, Int32(NativeChallengeState.completed.rawValue))

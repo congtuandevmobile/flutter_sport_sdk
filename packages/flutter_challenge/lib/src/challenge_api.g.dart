@@ -117,6 +117,7 @@ enum NativeProgressMetric {
   swimMeters,
   reps,
   duration,
+  cycleMeters,
 }
 
 /// Order matches `challenge.model.CompletionPolicy`.
