@@ -5,7 +5,7 @@ let package = Package(
     name: "flutter_sport_ble",
     platforms: [.iOS("15.0")],
     products: [
-        .library(name: "flutter-sport-ble", targets: ["flutter_sport_ble"]),
+        .library(name: "flutter-sport-ble", type: .dynamic, targets: ["flutter_sport_ble"]),
     ],
     dependencies: [
         .package(name: "FlutterFramework", path: "../FlutterFramework"),

@@ -5,7 +5,7 @@ let package = Package(
     name: "flutter_workout",
     platforms: [.iOS("15.0")],
     products: [
-        .library(name: "flutter-workout", targets: ["flutter_workout"]),
+        .library(name: "flutter-workout", type: .dynamic, targets: ["flutter_workout"]),
     ],
     dependencies: [
         .package(name: "FlutterFramework", path: "../FlutterFramework"),

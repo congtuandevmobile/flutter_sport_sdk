@@ -5,7 +5,7 @@ let package = Package(
     name: "flutter_challenge",
     platforms: [.iOS("15.0")],
     products: [
-        .library(name: "flutter-challenge", targets: ["flutter_challenge"]),
+        .library(name: "flutter-challenge", type: .dynamic, targets: ["flutter_challenge"]),
     ],
     dependencies: [
         .package(name: "FlutterFramework", path: "../FlutterFramework"),

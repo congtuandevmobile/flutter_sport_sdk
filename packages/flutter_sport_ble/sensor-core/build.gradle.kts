@@ -16,7 +16,9 @@ kotlin {
     listOf(iosArm64(), iosSimulatorArm64(), iosX64()).forEach { target ->
         target.binaries.framework {
             baseName = "SensorCore"
-            isStatic = true
+            // SPM links the generated Flutter plugin aggregate as a static product.
+            // Keep the core dynamic so its Kotlin/Native symbols are emitted once.
+            isStatic = false
             xcf.add(this)
         }
     }

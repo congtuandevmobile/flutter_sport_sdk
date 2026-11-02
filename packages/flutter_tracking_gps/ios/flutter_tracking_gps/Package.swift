@@ -5,7 +5,7 @@ let package = Package(
     name: "flutter_tracking_gps",
     platforms: [.iOS("15.0")],
     products: [
-        .library(name: "flutter-tracking-gps", targets: ["flutter_tracking_gps"]),
+        .library(name: "flutter-tracking-gps", type: .dynamic, targets: ["flutter_tracking_gps"]),
     ],
     dependencies: [
         .package(name: "FlutterFramework", path: "../FlutterFramework"),
