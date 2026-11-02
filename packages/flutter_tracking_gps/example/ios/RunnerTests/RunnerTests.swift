@@ -325,6 +325,7 @@ final class RunnerTests: XCTestCase {
         XCTAssertEqual(seqs, [0, 1])
         let persisted: [NativeFix] = try run { engine.readPersisted(sessionId: "s", afterSeq: -1, completion: $0) }
         XCTAssertEqual(persisted.map { $0.seq }, [0, 1])
+        XCTAssertEqual(persisted.map { $0.altitude }, [0, 0])
         XCTAssertTrue(store.files["s"]?.first.flatMap { JournalCodec.shared.decode(line: $0) } is JournalRecord.Header)
     }
 

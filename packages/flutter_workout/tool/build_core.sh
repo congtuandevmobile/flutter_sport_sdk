@@ -18,7 +18,8 @@ esac
 
 ./gradlew --no-daemon "$task"
 
-rm -rf "$root/ios/Frameworks/WorkoutCore.xcframework"
-mkdir -p "$root/ios/Frameworks"
-cp -R "build/XCFrameworks/$flavor/WorkoutCore.xcframework" "$root/ios/Frameworks/"
-echo "WorkoutCore.xcframework ($flavor) -> ios/Frameworks"
+destination="$root/ios/flutter_workout/Frameworks"
+rm -rf "$destination/WorkoutCore.xcframework"
+mkdir -p "$destination"
+cp -R "build/XCFrameworks/$flavor/WorkoutCore.xcframework" "$destination/"
+echo "WorkoutCore.xcframework ($flavor) -> ios/flutter_workout/Frameworks"

@@ -26,7 +26,7 @@ tracking-core/src/commonTest/kotlin/tracker/   tests, run on the JVM (fast)
   to the plugin's source dirs. Plain common Kotlin compiles as Android Kotlin;
   there is no second Gradle project to wire into the host app.
 - **iOS:** `tool/build_core.sh [debug|release]` builds `TrackingCore.xcframework`
-  and copies it to `ios/Frameworks/` (git-ignored); the podspec vendors it.
+  and copies it to `ios/flutter_tracking_gps/Frameworks/` (git-ignored); both the podspec and SwiftPM vendor it from there.
   Swift calls it as `GeoMath.shared.haversineMeters(lat1:lon1:lat2:lon2:)`.
 - **Tests:** `cd tracking-core && ./gradlew jvmTest`.
 

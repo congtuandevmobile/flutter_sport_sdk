@@ -13,7 +13,7 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "TrackingCore",
-            path: "../Frameworks/TrackingCore.xcframework"
+            path: "Frameworks/TrackingCore.xcframework"
         ),
         .target(
             name: "flutter_tracking_gps",

@@ -12,7 +12,7 @@ The Android side of the channel contract defined in `pigeons/tracking_api.dart`.
 | `NativePermission`, `NativeTrackingState` | Enums: permission status and engine state. |
 | `EngineConfig` | How the native engine measures distance (thresholds, PDR policy, Kalman, stop detector). |
 | `NativeGpsQuality`, `NativeDistance` | GPS quality and the distance block (`totalMeters, gpsMeters, gapBridgeMeters, pdrMeters, pendingPdrMeters, movingTimeMs, isStopped, speedMps, lastAcceptedFixAtMs`). |
-| `NativeFix` | One raw fix: `sessionId, segmentId, seq, timeMs, elapsedMs, latitude, longitude, horizontalAccuracy, speed, speedAccuracy, course, altitude, verticalAccuracy, provider, isMock`. Negative numbers mean "unknown". |
+| `NativeFix` | One raw fix: `sessionId, segmentId, seq, timeMs, elapsedMs, latitude, longitude, horizontalAccuracy, speed, speedAccuracy, course, altitude, verticalAccuracy, provider, isMock`. `altitude` is nullable; the remaining unavailable numeric readings use a negative sentinel. |
 | `StartConfig` | `sessionId, startSeq, startSegmentId, intervalMs, minDistanceMeters, notificationTitle, notificationText, engine, adaptiveSampling, batterySaver`. |
 | `NativeSnapshot` | `sessionId, state, segmentId, distance, fixCount, lastFixTimeMs, updatedAtMs, error`. |
 | `TrackingHostApi` | The interface `FlutterTrackingGpsPlugin` implements (permission, start, pause, resume, stop, snapshot, submitPdr (with the segment), restoreSession, getReport, persisted fixes, clear). |

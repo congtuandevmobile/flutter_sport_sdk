@@ -29,3 +29,4 @@ local.properties
 **/ios/**/.swiftpm/
 # Each package's Kotlin core is built by each package's tool/build_core.sh
 **/ios/Frameworks/
+**/ios/*/Frameworks/

@@ -154,8 +154,8 @@ class NativeFix {
   /// Degrees from true north; negative = unknown.
   double course;
 
-  /// Metres; [verticalAccuracy] negative = unknown.
-  double altitude;
+  /// Metres; null when the platform did not provide altitude.
+  double? altitude;
   double verticalAccuracy;
 
   /// `gps`, `fused`, `network`, `passive`, `unknown`.

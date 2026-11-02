@@ -22,7 +22,7 @@ Own GPS tracking engine for Flutter.
   s.swift_version = '5.9'
   s.frameworks = 'CoreLocation', 'CoreMotion'
   # Shared Kotlin core, built by tool/build_core.sh (not committed).
-  s.vendored_frameworks = 'Frameworks/TrackingCore.xcframework'
+  s.vendored_frameworks = 'flutter_tracking_gps/Frameworks/TrackingCore.xcframework'
 
   # If your plugin requires a privacy manifest, for example if it uses any
   # required reason APIs, update the PrivacyInfo.xcprivacy file to describe your

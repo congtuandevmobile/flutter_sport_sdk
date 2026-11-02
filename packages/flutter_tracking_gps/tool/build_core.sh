@@ -18,7 +18,8 @@ esac
 
 ./gradlew --no-daemon "$task"
 
-rm -rf "$root/ios/Frameworks/TrackingCore.xcframework"
-mkdir -p "$root/ios/Frameworks"
-cp -R "build/XCFrameworks/$flavor/TrackingCore.xcframework" "$root/ios/Frameworks/"
-echo "TrackingCore.xcframework ($flavor) -> ios/Frameworks"
+destination="$root/ios/flutter_tracking_gps/Frameworks"
+rm -rf "$destination/TrackingCore.xcframework"
+mkdir -p "$destination"
+cp -R "build/XCFrameworks/$flavor/TrackingCore.xcframework" "$destination/"
+echo "TrackingCore.xcframework ($flavor) -> ios/flutter_tracking_gps/Frameworks"

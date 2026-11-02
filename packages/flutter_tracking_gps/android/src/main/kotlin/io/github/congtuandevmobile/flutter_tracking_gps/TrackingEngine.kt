@@ -613,7 +613,7 @@ internal class TrackingEngine(
             guardedCore {
                 it.onFix(
                     id, segmentId.toInt(), n, l.elapsedMs, l.timeMs, l.latitude, l.longitude, l.horizontalAccuracy, l.speed,
-                    l.speedAccuracy, l.course, l.altitude, l.verticalAccuracy, l.provider, l.isMock, monotonicMs(),
+                    l.speedAccuracy, l.course, l.altitude ?: -1.0, l.verticalAccuracy, l.provider, l.isMock, monotonicMs(),
                 )
             }
             if (adaptive) plan = rec.lastPlan
@@ -737,7 +737,8 @@ internal class TrackingEngine(
     private fun JournalRecord.Fix.toNative() = NativeFix(
         sessionId = sessionId, segmentId = segmentId.toLong(), seq = seq, timeMs = wallTimeMs, elapsedMs = timeMs,
         latitude = latitude, longitude = longitude, horizontalAccuracy = horizontalAccuracy, speed = speed,
-        speedAccuracy = speedAccuracy, course = course, altitude = altitude, verticalAccuracy = verticalAccuracy,
+        speedAccuracy = speedAccuracy, course = course,
+        altitude = altitude.takeIf { verticalAccuracy >= 0.0 }, verticalAccuracy = verticalAccuracy,
         provider = provider, isMock = isMock,
     )
 

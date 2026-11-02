@@ -1,6 +1,7 @@
 ## Unreleased
 
 * Added Flutter Swift Package Manager support for the iOS plugin while retaining the CocoaPods podspec fallback. The Kotlin `SensorCore.xcframework` remains owned by this package.
+* Fixed SwiftPM resolution in Flutter apps by packaging `SensorCore.xcframework` inside the Swift package directory.
 * Fix: `PigeonSportBlePlatform()` is one shared instance per engine, so a second `SportBle` no longer silences the first.
 
 ## 0.0.1-beta (second pass)

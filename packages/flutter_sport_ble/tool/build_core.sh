@@ -18,7 +18,8 @@ esac
 
 ./gradlew --no-daemon "$task"
 
-rm -rf "$root/ios/Frameworks/SensorCore.xcframework"
-mkdir -p "$root/ios/Frameworks"
-cp -R "build/XCFrameworks/$flavor/SensorCore.xcframework" "$root/ios/Frameworks/"
-echo "SensorCore.xcframework ($flavor) -> ios/Frameworks"
+destination="$root/ios/flutter_sport_ble/Frameworks"
+rm -rf "$destination/SensorCore.xcframework"
+mkdir -p "$destination"
+cp -R "build/XCFrameworks/$flavor/SensorCore.xcframework" "$destination/"
+echo "SensorCore.xcframework ($flavor) -> ios/flutter_sport_ble/Frameworks"

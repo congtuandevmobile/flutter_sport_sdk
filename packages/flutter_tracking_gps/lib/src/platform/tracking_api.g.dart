@@ -203,7 +203,7 @@ class NativeFix {
     required this.speed,
     required this.speedAccuracy,
     required this.course,
-    required this.altitude,
+    this.altitude,
     required this.verticalAccuracy,
     required this.provider,
     required this.isMock,
@@ -242,8 +242,8 @@ class NativeFix {
   /// Degrees from true north; negative = unknown.
   double course;
 
-  /// Metres; [verticalAccuracy] negative = unknown.
-  double altitude;
+  /// Metres; null when the platform did not provide altitude.
+  double? altitude;
 
   double verticalAccuracy;
 
@@ -290,7 +290,7 @@ class NativeFix {
       speed: result[8]! as double,
       speedAccuracy: result[9]! as double,
       course: result[10]! as double,
-      altitude: result[11]! as double,
+      altitude: result[11] as double?,
       verticalAccuracy: result[12]! as double,
       provider: result[13]! as String,
       isMock: result[14]! as bool,

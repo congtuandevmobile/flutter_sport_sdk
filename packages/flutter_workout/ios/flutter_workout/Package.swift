@@ -13,7 +13,7 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "WorkoutCore",
-            path: "../Frameworks/WorkoutCore.xcframework"
+            path: "Frameworks/WorkoutCore.xcframework"
         ),
         .target(
             name: "flutter_workout",

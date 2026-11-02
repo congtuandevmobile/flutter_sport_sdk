@@ -130,7 +130,7 @@ there is never a second Kalman or distance rule that disagrees with the first.
 | Platform | How the core is used |
 |---|---|
 | Android | `android/build.gradle.kts` adds `tracking-core/src/commonMain/kotlin` to the plugin's source dirs. No second Gradle project. |
-| iOS | `tool/build_core.sh [debug\|release]` builds `TrackingCore.xcframework` into `ios/Frameworks/` (git-ignored); the podspec vendors it. Swift calls e.g. `GeoMath.shared.haversineMeters(...)`. |
+| iOS | `tool/build_core.sh [debug\|release]` builds `TrackingCore.xcframework` into `ios/flutter_tracking_gps/Frameworks/` (git-ignored); CocoaPods and SwiftPM both consume it from inside the Swift package. Swift calls e.g. `GeoMath.shared.haversineMeters(...)`. |
 | Tests | `cd tracking-core && ./gradlew jvmTest` (JVM, fast). |
 
 | Folder | Content | On the recording path |

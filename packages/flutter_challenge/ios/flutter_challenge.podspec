@@ -19,5 +19,5 @@ A multi-stage challenge for Flutter: stages with their own goal, source and comp
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }
   s.swift_version = '5.9'
   # Shared Kotlin challenge core, built by tool/build_core.sh (not committed).
-  s.vendored_frameworks = 'Frameworks/ChallengeCore.xcframework'
+  s.vendored_frameworks = 'flutter_challenge/Frameworks/ChallengeCore.xcframework'
 end

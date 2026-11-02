@@ -1,6 +1,8 @@
 ## Unreleased
 
 * Added Flutter Swift Package Manager support for the iOS plugin while retaining the CocoaPods podspec fallback. The Kotlin `TrackingCore.xcframework` remains owned by this package.
+* Fixed missing altitude being exposed as `0.0`: `TrackingFix.altitude` now stays null from Android/iOS through the Pigeon bridge and persisted-fix replay.
+* Kept the Kotlin XCFramework inside the Swift package so Flutter's ephemeral SwiftPM symlink resolves the local binary target correctly.
 
 ## v0.0.1-beta.2
 

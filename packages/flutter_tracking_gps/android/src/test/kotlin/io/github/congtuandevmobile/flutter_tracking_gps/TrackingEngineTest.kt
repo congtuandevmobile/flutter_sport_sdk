@@ -28,11 +28,17 @@ private const val MONO = 5_000_000L
 private const val METERS_PER_DEGREE = 111_195.0
 
 /** A location [north] metres north of the origin, [seconds] after BASE. */
-private fun loc(seconds: Double, north: Double, speed: Double = -1.0, accuracy: Double = 5.0) = RawLocation(
+private fun loc(
+    seconds: Double,
+    north: Double,
+    speed: Double = -1.0,
+    accuracy: Double = 5.0,
+    altitude: Double? = null,
+) = RawLocation(
     timeMs = BASE + (seconds * 1000).toLong(), elapsedMs = MONO + (seconds * 1000).toLong(),
     latitude = 10.0 + north / METERS_PER_DEGREE, longitude = 106.0,
     horizontalAccuracy = accuracy, speed = speed, speedAccuracy = -1.0, course = -1.0,
-    altitude = 0.0, verticalAccuracy = -1.0, provider = "gps", isMock = false,
+    altitude = altitude, verticalAccuracy = if (altitude == null) -1.0 else 5.0, provider = "gps", isMock = false,
 )
 
 private class FakeSource : LocationSource {
@@ -352,6 +358,7 @@ class TrackingEngineTest {
         assertEquals(listOf(1L, 2L, 3L), fixes.map { it.seq })
         assertEquals(BASE + 1000, fixes.first().timeMs)
         assertEquals(MONO + 1000, fixes.first().elapsedMs)
+        assertNull(fixes.first().altitude)
     }
 
     @Test

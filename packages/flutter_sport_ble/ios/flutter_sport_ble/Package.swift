@@ -13,7 +13,7 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "SensorCore",
-            path: "../Frameworks/SensorCore.xcframework"
+            path: "Frameworks/SensorCore.xcframework"
         ),
         .target(
             name: "flutter_sport_ble",

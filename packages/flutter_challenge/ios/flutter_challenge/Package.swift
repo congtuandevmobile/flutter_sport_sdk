@@ -13,7 +13,7 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "ChallengeCore",
-            path: "../Frameworks/ChallengeCore.xcframework"
+            path: "Frameworks/ChallengeCore.xcframework"
         ),
         .target(
             name: "flutter_challenge",

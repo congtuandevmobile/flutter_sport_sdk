@@ -292,8 +292,8 @@ struct NativeFix: Hashable {
   var speedAccuracy: Double
   /// Degrees from true north; negative = unknown.
   var course: Double
-  /// Metres; [verticalAccuracy] negative = unknown.
-  var altitude: Double
+  /// Metres; null when the platform did not provide altitude.
+  var altitude: Double? = nil
   var verticalAccuracy: Double
   /// `gps`, `fused`, `network`, `passive`, `unknown`.
   var provider: String
@@ -314,7 +314,7 @@ struct NativeFix: Hashable {
     let speed = pigeonVar_list[8] as! Double
     let speedAccuracy = pigeonVar_list[9] as! Double
     let course = pigeonVar_list[10] as! Double
-    let altitude = pigeonVar_list[11] as! Double
+    let altitude: Double? = nilOrValue(pigeonVar_list[11])
     let verticalAccuracy = pigeonVar_list[12] as! Double
     let provider = pigeonVar_list[13] as! String
     let isMock = pigeonVar_list[14] as! Bool

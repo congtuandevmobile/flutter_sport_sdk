@@ -6,7 +6,7 @@
 Where raw locations come from, behind an interface so the engine can be unit tested with a fake and without any Android type.
 
 ## `data class RawLocation`
-One reading free of Android types: `timeMs, elapsedMs, latitude, longitude, horizontalAccuracy, speed, speedAccuracy, course, altitude, verticalAccuracy, provider, isMock`. A negative number means "unknown".
+One reading free of Android types: `timeMs, elapsedMs, latitude, longitude, horizontalAccuracy, speed, speedAccuracy, course, altitude, verticalAccuracy, provider, isMock`. `altitude` is null when absent; the other optional numeric readings use a negative value for "unknown" at this native boundary.
 
 ## `interface LocationSource`
 `locations(intervalMs: Long, minDistanceMeters: Float): Flow<RawLocation>`: a cold flow. Collecting registers the updates; cancelling unregisters them. It fails with the underlying exception (for example `SecurityException`).

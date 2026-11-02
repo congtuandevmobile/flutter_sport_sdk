@@ -19,5 +19,5 @@ A workout session for Flutter: one distance from counters and speeds, and a jour
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }
   s.swift_version = '5.9'
   # Shared Kotlin workout core, built by tool/build_core.sh (not committed).
-  s.vendored_frameworks = 'Frameworks/WorkoutCore.xcframework'
+  s.vendored_frameworks = 'flutter_workout/Frameworks/WorkoutCore.xcframework'
 end

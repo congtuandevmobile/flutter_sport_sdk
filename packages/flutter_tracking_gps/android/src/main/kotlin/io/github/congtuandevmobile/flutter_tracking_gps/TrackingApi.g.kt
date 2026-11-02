@@ -372,8 +372,8 @@ data class NativeFix (
   val speedAccuracy: Double,
   /** Degrees from true north; negative = unknown. */
   val course: Double,
-  /** Metres; [verticalAccuracy] negative = unknown. */
-  val altitude: Double,
+  /** Metres; null when the platform did not provide altitude. */
+  val altitude: Double? = null,
   val verticalAccuracy: Double,
   /** `gps`, `fused`, `network`, `passive`, `unknown`. */
   val provider: String,
@@ -394,7 +394,7 @@ data class NativeFix (
       val speed = pigeonVar_list[8] as Double
       val speedAccuracy = pigeonVar_list[9] as Double
       val course = pigeonVar_list[10] as Double
-      val altitude = pigeonVar_list[11] as Double
+      val altitude = pigeonVar_list[11] as Double?
       val verticalAccuracy = pigeonVar_list[12] as Double
       val provider = pigeonVar_list[13] as String
       val isMock = pigeonVar_list[14] as Boolean

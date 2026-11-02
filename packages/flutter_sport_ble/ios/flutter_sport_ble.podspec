@@ -20,5 +20,5 @@ Bluetooth LE sport sensors for Flutter: several devices at once, one resolved va
   s.swift_version = '5.9'
   s.frameworks = 'CoreBluetooth'
   # Shared Kotlin sensor core, built by tool/build_core.sh (not committed).
-  s.vendored_frameworks = 'Frameworks/SensorCore.xcframework'
+  s.vendored_frameworks = 'flutter_sport_ble/Frameworks/SensorCore.xcframework'
 end

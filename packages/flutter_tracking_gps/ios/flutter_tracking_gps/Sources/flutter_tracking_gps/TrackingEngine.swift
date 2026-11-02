@@ -792,7 +792,7 @@ final class TrackingEngine: LocationProviderDelegate {
                     speed: location.speed < 0 ? -1 : location.speed,
                     speedAccuracy: location.speedAccuracy < 0 ? -1 : location.speedAccuracy,
                     course: location.course < 0 ? -1 : location.course,
-                    altitude: location.verticalAccuracy < 0 ? 0 : location.altitude,
+                    altitude: location.verticalAccuracy < 0 ? -1 : location.altitude,
                     verticalAccuracy: location.verticalAccuracy < 0 ? -1 : location.verticalAccuracy,
                     provider: "gps", isMock: mock, nowMs: arrivalMono)
                 let fix = Self.nativeFix(
@@ -1110,7 +1110,7 @@ final class TrackingEngine: LocationProviderDelegate {
             horizontalAccuracy: l.horizontalAccuracy, speed: l.speed < 0 ? -1 : l.speed,
             speedAccuracy: l.speedAccuracy < 0 ? -1 : l.speedAccuracy,
             course: l.course < 0 ? -1 : l.course,
-            altitude: l.verticalAccuracy < 0 ? 0 : l.altitude,
+            altitude: l.verticalAccuracy < 0 ? nil : l.altitude,
             verticalAccuracy: l.verticalAccuracy < 0 ? -1 : l.verticalAccuracy,
             provider: "gps", isMock: mock)
     }
@@ -1120,7 +1120,7 @@ final class TrackingEngine: LocationProviderDelegate {
             sessionId: f.sessionId, segmentId: Int64(f.segmentId), seq: f.seq, timeMs: f.wallTimeMs,
             elapsedMs: f.timeMs, latitude: f.latitude, longitude: f.longitude,
             horizontalAccuracy: f.horizontalAccuracy, speed: f.speed, speedAccuracy: f.speedAccuracy,
-            course: f.course, altitude: f.altitude, verticalAccuracy: f.verticalAccuracy,
+            course: f.course, altitude: f.verticalAccuracy < 0 ? nil : f.altitude, verticalAccuracy: f.verticalAccuracy,
             provider: f.provider, isMock: f.isMock)
     }
 

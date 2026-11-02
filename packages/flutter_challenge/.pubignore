@@ -1,4 +1,4 @@
-# Replaces .gitignore for packaging: ios/Frameworks (the prebuilt core, built by tool/build_core.sh release) MUST ship,
+# Replaces .gitignore for packaging: ios/flutter_challenge/Frameworks (the prebuilt core, built by tool/build_core.sh release) MUST ship,
 # because a consumer has no Gradle/Kotlin build for iOS. Build outputs and local files must not.
 .dart_tool/
 .gradle/

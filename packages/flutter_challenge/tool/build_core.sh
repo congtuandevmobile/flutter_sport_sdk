@@ -18,7 +18,8 @@ esac
 
 ./gradlew --no-daemon "$task"
 
-rm -rf "$root/ios/Frameworks/ChallengeCore.xcframework"
-mkdir -p "$root/ios/Frameworks"
-cp -R "build/XCFrameworks/$flavor/ChallengeCore.xcframework" "$root/ios/Frameworks/"
-echo "ChallengeCore.xcframework ($flavor) -> ios/Frameworks"
+destination="$root/ios/flutter_challenge/Frameworks"
+rm -rf "$destination/ChallengeCore.xcframework"
+mkdir -p "$destination"
+cp -R "build/XCFrameworks/$flavor/ChallengeCore.xcframework" "$destination/"
+echo "ChallengeCore.xcframework ($flavor) -> ios/flutter_challenge/Frameworks"

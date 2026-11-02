@@ -44,5 +44,5 @@ Where things stand: [doc/COMPATIBILITY.yaml](doc/COMPATIBILITY.yaml) (candidate 
 
 ## Independence rule and release check
 Every package owns its core and must build alone. `tool/release_check.sh <package> [android|ios|both]` builds the release XCFramework, packages the SDK
-(respecting its `.pubignore`, which ships `ios/Frameworks`), extracts it into an empty directory, creates a fresh Flutter app that depends on that
+(respecting its `.pubignore`, which ships the XCFramework inside `ios/<swift-package>/Frameworks`), extracts it into an empty directory, creates a fresh Flutter app that depends on that
 package only, and builds it. Run it before every release; the `release-check` workflow does the same per package.
