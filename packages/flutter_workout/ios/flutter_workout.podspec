@@ -12,7 +12,7 @@ A workout session for Flutter: one distance from counters and speeds, and a jour
   s.license          = { :file => '../LICENSE' }
   s.author           = { 'Nguyễn Công Tuấn' => 'nguyencongtuan.devmobile@gmail.com' }
   s.source           = { :path => '.' }
-  s.source_files = 'Classes/**/*.{swift,h,m}'
+  s.source_files = 'flutter_workout/Sources/flutter_workout/**/*.{swift,h,m}'
   s.dependency 'Flutter'
   s.platform = :ios, '15.0'
 

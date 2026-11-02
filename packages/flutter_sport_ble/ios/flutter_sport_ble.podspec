@@ -12,7 +12,7 @@ Bluetooth LE sport sensors for Flutter: several devices at once, one resolved va
   s.license          = { :file => '../LICENSE' }
   s.author           = { 'Nguyễn Công Tuấn' => 'nguyencongtuan.devmobile@gmail.com' }
   s.source           = { :path => '.' }
-  s.source_files = 'Classes/**/*.{swift,h,m}'
+  s.source_files = 'flutter_sport_ble/Sources/flutter_sport_ble/**/*.{swift,h,m}'
   s.dependency 'Flutter'
   s.platform = :ios, '15.0'
 

@@ -30,7 +30,7 @@ Constructor parameters mirror `TrackingConfig` (`maxAccuracyMeters, maxFixAgeMs,
 - **Codes are written out, never taken from `ordinal`.** State: 0 idle, 1 running, 2 paused, 3 finished. Quality: 0 unknown, 1 good, 2 degraded, 3 unavailable, 4 recovering. Verdict: 0 anchor, 1 accepted, 2 recovered, 3 noise, 4 stationary, 5 jump, 6 outlier, 7 low accuracy, 8 stale, 9 duplicate, 10 wrong segment, 11 mock, 12 not running, 13 wrong session, 14 invalid, 15 future, 16 reanchored. Reordering an enum cannot change what Swift reads.
 
 ## Used by
-`android/.../TrackingEngine.kt`, `ios/Classes/TrackingEngine.swift`. Tested by `BridgeTest`.
+`android/.../TrackingEngine.kt`, `ios/flutter_tracking_gps/Sources/flutter_tracking_gps/TrackingEngine.swift`. Tested by `BridgeTest`.
 
 ## Steps (added)
 New constructor parameter `initialStrideMeters` (zero or negative = none). `start(sessionId, atMs, segmentId, initialSteps = 0)`.

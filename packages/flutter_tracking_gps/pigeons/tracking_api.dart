@@ -7,7 +7,7 @@ import 'package:pigeon/pigeon.dart';
     kotlinOut:
         'android/src/main/kotlin/io/github/congtuandevmobile/flutter_tracking_gps/TrackingApi.g.kt',
     kotlinOptions: KotlinOptions(package: 'io.github.congtuandevmobile.flutter_tracking_gps'),
-    swiftOut: 'ios/Classes/TrackingApi.g.swift',
+    swiftOut: 'ios/flutter_tracking_gps/Sources/flutter_tracking_gps/TrackingApi.g.swift',
   ),
 )
 

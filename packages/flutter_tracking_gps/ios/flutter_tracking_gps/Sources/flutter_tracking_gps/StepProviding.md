@@ -1,6 +1,6 @@
 # StepProviding.swift
 
-**Path:** `ios/Classes/StepProviding.swift` · **Layer:** iOS native (sensor)
+**Path:** `ios/flutter_tracking_gps/Sources/flutter_tracking_gps/StepProviding.swift` · **Layer:** iOS native (sensor)
 
 ## Purpose
 Where step counts come from, as a protocol so `TrackingEngine` can be tested with a fake. It only reads `CMPedometer`; the accounting is the shared core's. Every failure is a typed `StepError` with a stable code and message and is NEVER collapsed into "0 steps".

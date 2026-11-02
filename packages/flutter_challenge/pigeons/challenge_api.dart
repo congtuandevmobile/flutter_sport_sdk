@@ -7,7 +7,7 @@ import 'package:pigeon/pigeon.dart';
     kotlinOut:
         'android/src/main/kotlin/io/github/congtuandevmobile/flutter_challenge/ChallengeApi.g.kt',
     kotlinOptions: KotlinOptions(package: 'io.github.congtuandevmobile.flutter_challenge'),
-    swiftOut: 'ios/Classes/ChallengeApi.g.swift',
+    swiftOut: 'ios/flutter_challenge/Sources/flutter_challenge/ChallengeApi.g.swift',
   ),
 )
 

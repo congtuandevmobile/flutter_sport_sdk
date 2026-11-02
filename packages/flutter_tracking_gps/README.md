@@ -704,7 +704,7 @@ lib/src/platform    TrackingPlatform + Pigeon bridge (*.g.dart generated)
 pigeons/            the channel contract (edit here, then: dart run pigeon --input pigeons/tracking_api.dart)
 tracking-core/      the shipped distance engine + algorithms (Kotlin Multiplatform)
 android/            Kotlin: FusedLocationSource, SensorStepSource, TrackingEngine, TrackingService, ...
-ios/Classes/        Swift: CoreLocationProvider, CoreMotionStepProvider, TrackingEngine, Runtime
+ios/flutter_tracking_gps/Sources/flutter_tracking_gps/  Swift: CoreLocationProvider, CoreMotionStepProvider, TrackingEngine, Runtime
 doc/                FLOW, KMP, NATIVE_RULES, PRESENTER, JOURNAL, DEVICE_TESTS
 test/               Dart tests + CSV fixtures shared with the core
 example/            a small recorder screen

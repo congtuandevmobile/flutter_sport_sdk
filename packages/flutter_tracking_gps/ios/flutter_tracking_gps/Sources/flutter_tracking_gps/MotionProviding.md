@@ -1,6 +1,6 @@
 # MotionProviding.swift
 
-**Path:** `ios/Classes/MotionProviding.swift` · **Layer:** iOS native (sensor)
+**Path:** `ios/flutter_tracking_gps/Sources/flutter_tracking_gps/MotionProviding.swift` · **Layer:** iOS native (sensor)
 
 ## Purpose
 Where accelerometer readings come from for the pedal-cadence estimator, as a protocol so `TrackingEngine` can be tested with a fake. It only reads the sensor; the rhythm is found by the shared core (`PedalCadenceEstimator`). Every failure is a typed `MotionError` with a stable code (`CADENCE_FAILED`) and is never swallowed.

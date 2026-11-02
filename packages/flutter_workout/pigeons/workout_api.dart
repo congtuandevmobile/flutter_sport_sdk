@@ -7,7 +7,7 @@ import 'package:pigeon/pigeon.dart';
     kotlinOut:
         'android/src/main/kotlin/io/github/congtuandevmobile/flutter_workout/WorkoutApi.g.kt',
     kotlinOptions: KotlinOptions(package: 'io.github.congtuandevmobile.flutter_workout'),
-    swiftOut: 'ios/Classes/WorkoutApi.g.swift',
+    swiftOut: 'ios/flutter_workout/Sources/flutter_workout/WorkoutApi.g.swift',
   ),
 )
 

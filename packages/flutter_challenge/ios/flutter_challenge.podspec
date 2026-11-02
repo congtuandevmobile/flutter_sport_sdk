@@ -12,7 +12,7 @@ A multi-stage challenge for Flutter: stages with their own goal, source and comp
   s.license          = { :file => '../LICENSE' }
   s.author           = { 'Nguyễn Công Tuấn' => 'nguyencongtuan.devmobile@gmail.com' }
   s.source           = { :path => '.' }
-  s.source_files = 'Classes/**/*.{swift,h,m}'
+  s.source_files = 'flutter_challenge/Sources/flutter_challenge/**/*.{swift,h,m}'
   s.dependency 'Flutter'
   s.platform = :ios, '15.0'
 

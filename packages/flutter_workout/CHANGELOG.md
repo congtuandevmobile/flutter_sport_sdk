@@ -1,5 +1,6 @@
 ## Unreleased
 
+* Added Flutter Swift Package Manager support for the iOS plugin while retaining the CocoaPods podspec fallback. The Kotlin `WorkoutCore.xcframework` remains owned by this package.
 * Fix: `finish` keeps the active pointer when the Finished line could not be written (`journalFailed`); the Finished event, the pointer and the snapshot are now one serialized step, so the snapshot already shows the failure.
 * Fix: `start` is refused with `RECOVERY_REQUIRED` while the previous workout finished in memory but its journal failed; `clearSession` discards it on purpose.
 * Fix: an EMPTY journal file still takes its id (`SESSION_EXISTS`, new `JournalStore.exists`); a start that cannot write its first line leaves the id free.

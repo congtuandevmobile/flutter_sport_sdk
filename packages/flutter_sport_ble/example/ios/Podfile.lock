@@ -1,21 +1,15 @@
 PODS:
   - Flutter (1.0.0)
-  - flutter_sport_ble (0.0.1-beta):
-    - Flutter
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
-  - flutter_sport_ble (from `.symlinks/plugins/flutter_sport_ble/ios`)
 
 EXTERNAL SOURCES:
   Flutter:
     :path: Flutter
-  flutter_sport_ble:
-    :path: ".symlinks/plugins/flutter_sport_ble/ios"
 
 SPEC CHECKSUMS:
-  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
-  flutter_sport_ble: 1e7aac7fe36f318da26aef7c83d856798297a8d3
+  Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
 
 PODFILE CHECKSUM: 53a6aebc29ccee84c41f92f409fc20cd4ca011f1
 

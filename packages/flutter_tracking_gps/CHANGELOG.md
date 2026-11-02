@@ -1,3 +1,7 @@
+## Unreleased
+
+* Added Flutter Swift Package Manager support for the iOS plugin while retaining the CocoaPods podspec fallback. The Kotlin `TrackingCore.xcframework` remains owned by this package.
+
 ## v0.0.1-beta.2
 
 **External cadence sensor (fed by the host).** Not tested with a real sensor or on a physical device. The package still has no Bluetooth

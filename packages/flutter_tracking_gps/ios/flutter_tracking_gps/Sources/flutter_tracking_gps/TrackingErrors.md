@@ -1,6 +1,6 @@
 # TrackingErrors.swift
 
-**Path:** `ios/Classes/TrackingErrors.swift` · **Layer:** iOS native (error handling)
+**Path:** `ios/flutter_tracking_gps/Sources/flutter_tracking_gps/TrackingErrors.swift` · **Layer:** iOS native (error handling)
 
 ## Purpose
 Implements the project rule "never swallow an error": every native failure becomes a `PigeonError` (the Swift counterpart of `FlutterError`) with a stable **code**, a short **message** and **details** (the underlying error and the call stack), and is also logged.

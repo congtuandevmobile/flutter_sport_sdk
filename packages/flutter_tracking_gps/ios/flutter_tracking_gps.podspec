@@ -13,7 +13,7 @@ Own GPS tracking engine for Flutter.
   s.license          = { :file => '../LICENSE' }
   s.author           = { 'Nguyễn Công Tuấn' => 'nguyencongtuan.devmobile@gmail.com' }
   s.source           = { :path => '.' }
-  s.source_files = 'Classes/**/*.{swift,h,m}'
+  s.source_files = 'flutter_tracking_gps/Sources/flutter_tracking_gps/**/*.{swift,h,m}'
   s.dependency 'Flutter'
   s.platform = :ios, '15.0'
 
@@ -28,5 +28,5 @@ Own GPS tracking engine for Flutter.
   # required reason APIs, update the PrivacyInfo.xcprivacy file to describe your
   # plugin's privacy impact, and then uncomment this line. For more information,
   # see https://developer.apple.com/documentation/bundleresources/privacy_manifest_files
-  s.resource_bundles = {'flutter_tracking_gps_privacy' => ['Resources/PrivacyInfo.xcprivacy']}
+  s.resource_bundles = {'flutter_tracking_gps_privacy' => ['flutter_tracking_gps/Sources/flutter_tracking_gps/PrivacyInfo.xcprivacy']}
 end

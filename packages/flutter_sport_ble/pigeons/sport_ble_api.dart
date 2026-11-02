@@ -7,7 +7,7 @@ import 'package:pigeon/pigeon.dart';
     kotlinOut:
         'android/src/main/kotlin/io/github/congtuandevmobile/flutter_sport_ble/SportBleApi.g.kt',
     kotlinOptions: KotlinOptions(package: 'io.github.congtuandevmobile.flutter_sport_ble'),
-    swiftOut: 'ios/Classes/SportBleApi.g.swift',
+    swiftOut: 'ios/flutter_sport_ble/Sources/flutter_sport_ble/SportBleApi.g.swift',
   ),
 )
 
