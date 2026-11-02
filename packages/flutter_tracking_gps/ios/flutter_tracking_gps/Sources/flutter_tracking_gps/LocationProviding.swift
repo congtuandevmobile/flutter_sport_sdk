@@ -128,12 +128,11 @@ final class LiveUpdatesLocationProvider: LocationProviding {
     private weak var storedDelegate: LocationProviderDelegate?
     private let authorization: CoreLocationProvider
 
-    /// Guards [generation], [task], [background] and [serviceSession]: the engine queue, the main queue and the Swift
+    /// Guards [generation], [task] and [background]: the engine queue, the main queue and the Swift
     /// task all touch them.
     private let lock = NSLock()
     private var task: Task<Void, Never>?
     private var background: CLBackgroundActivitySession?
-    private var serviceSession: AnyObject?
     private var generation = 0
 
     init() { authorization = CoreLocationProvider() }
@@ -150,7 +149,6 @@ final class LiveUpdatesLocationProvider: LocationProviding {
         let token = generation
         let session = CLBackgroundActivitySession()
         background = session
-        if #available(iOS 18.0, *) { serviceSession = CLServiceSession(authorization: .whenInUse) }
         task = Task { [weak self] in
             do {
                 for try await update in CLLocationUpdate.liveUpdates(.fitness) {
@@ -174,8 +172,6 @@ final class LiveUpdatesLocationProvider: LocationProviding {
         task = nil
         background?.invalidate()
         background = nil
-        if #available(iOS 18.0, *) { (serviceSession as? CLServiceSession)?.invalidate() }
-        serviceSession = nil
         lock.unlock()
     }
 
@@ -205,17 +201,8 @@ final class LiveUpdatesLocationProvider: LocationProviding {
             delegate.locationProvider(self, didUpdate: [location])
             return
         }
-        // The diagnostics exist from iOS 18. On iOS 17 a lost authorization still reaches the engine through the
-        // authorization callback of the manager this provider holds.
-        if #available(iOS 18.0, *) {
-            if update.authorizationDenied || update.authorizationDeniedGlobally || update.authorizationRestricted {
-                delegate.locationProvider(self, didFailWith: CLError(.denied))
-                return
-            }
-            if update.insufficientlyInUse || update.serviceSessionRequired {
-                // The background session / service session is not in effect: location will not arrive.
-                delegate.locationProvider(self, didFailWith: CLError(.denied))
-            }
-        }
+        // Older Xcode SDKs do not expose the iOS 18 diagnostic properties on
+        // CLLocationUpdate. Authorization failures are still delivered by the
+        // CoreLocation authorization callback held by CoreLocationProvider.
     }
 }
