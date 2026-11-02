@@ -1,0 +1,66 @@
+name: Publish package to pub.dev
+
+on:
+  push:
+    tags:
+      - 'flutter_activity-v*'
+      - 'flutter_challenge-v*'
+      - 'flutter_multisport-v*'
+      - 'flutter_multisport_adapters-v*'
+      - 'flutter_sport_ble-v*'
+      - 'flutter_sport_ble_adapter-v*'
+      - 'flutter_tracking_gps-v*'
+      - 'flutter_tracking_gps_adapter-v*'
+      - 'flutter_workout-v*'
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      package: ${{ steps.package.outputs.package }}
+      working-directory: ${{ steps.package.outputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve and validate package tag
+        id: package
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          package=''
+          while IFS= read -r candidate; do
+            prefix="$candidate-v"
+            if [[ "$RELEASE_TAG" == "$prefix"* ]]; then
+              package="$candidate"
+              version="${RELEASE_TAG#"$prefix"}"
+              break
+            fi
+          done < <(tool/release_manifest.sh all)
+
+          [[ -n "$package" ]] || {
+            echo "Unsupported release tag: $RELEASE_TAG" >&2
+            exit 1
+          }
+          expected="$(tool/release_manifest.sh version "$package")"
+          [[ "$version" == "$expected" ]] || {
+            echo "Tag version $version does not match packages/$package/pubspec.yaml ($expected)" >&2
+            exit 1
+          }
+          if tool/release_manifest.sh is-native "$package"; then
+            framework="$(tool/release_manifest.sh framework-path "$package")"
+            [[ -f "$framework/Info.plist" ]] || {
+              echo "Release tag is missing its native artifact: $framework" >&2
+              exit 1
+            }
+          fi
+          echo "package=$package" >> "$GITHUB_OUTPUT"
+          echo "working-directory=packages/$package" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: resolve
+    permissions:
+      id-token: write
+      contents: read
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    with:
+      working-directory: ${{ needs.resolve.outputs.working-directory }}
+      use-flutter: true

@@ -1,5 +1,7 @@
 # flutter_sport_sdk
 
+Package maintainers: see [doc/RELEASING.md](doc/RELEASING.md) for commit markers, test tags, and pub.dev publishing.
+
 Generic Flutter SDKs for sport apps, in one workspace.
 
 Start with [the source summary](doc/SOURCE_SUMMARY.md) for the package map, composition examples, current limits and next steps. [SDK rules](doc/SDK_RULES.md) and [AGENTS.md](AGENTS.md) capture the boundaries to preserve when extending the repository.

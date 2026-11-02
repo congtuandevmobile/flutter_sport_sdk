@@ -27,3 +27,9 @@ This repository builds reusable Flutter SDKs for sport recording and multi-stage
 - Change a Pigeon schema at its source and regenerate bindings; never hand-edit generated files. Keep the matching native `.md` companion docs in sync.
 - Add focused tests at the layer that owns a changed rule, including pause, reconnect, duplicate, source switch, and recovery cases when relevant. Verify an SDK can build as the sole dependency before claiming independent release readiness.
 - Separate **implemented**, **tested with fake/simulator**, and **verified on real hardware** in docs and user-facing claims. Update `doc/QUALITY_GATES.md` and `doc/COMPATIBILITY.yaml` only with observed evidence.
+
+## Package releases
+
+- Read [doc/RELEASING.md](doc/RELEASING.md) before changing package versions, release jobs, or tag conventions.
+- Release and test tags are created only by the documented commit markers. Never move or overwrite an existing package tag.
+- Keep `tool/release_manifest.sh`, release validation, the publish workflow tag list, and `doc/RELEASING.md` synchronized when packages are added, removed, or renamed.

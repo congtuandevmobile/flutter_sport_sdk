@@ -50,5 +50,6 @@ never imports another product's core; products meet only in the app or in an opt
 - Native engines map the core's enums to the Pigeon enums by order/name: each engine test suite has a test that fails on drift.
 
 ## Releases
-One tag per package: `<package>-v<version>` (for example `flutter_sport_ble-v0.0.1-beta`). `flutter_tracking_gps` still has its own
-release workflow from its original repository (`.github/workflows/release.yml` there); it has NOT been moved here.
+Package release and Git test-tag automation is owned by this monorepo. Read `doc/RELEASING.md` before changing versions, tags,
+or workflows. Release tags use `<package>-v<version>`; test tags use `<package>-test-v<version>-<short-sha>`. Native tags point
+to detached artifact snapshots that contain their release XCFrameworks; generated binaries remain absent from `main`.
