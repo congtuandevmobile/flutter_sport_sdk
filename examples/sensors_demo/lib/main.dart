@@ -3,8 +3,11 @@ import 'package:flutter_sport_ble/flutter_sport_ble.dart';
 import 'package:flutter_tracking_gps/flutter_tracking_gps.dart';
 import 'package:flutter_workout/flutter_workout.dart';
 
-/// The three native cores (tracking, sensors, workout) live in one app: a launch check. `WorkoutFeeder` is the glue that a
-/// future public package would own: it turns what the sensors and the GPS say into samples of a workout.
+import 'real_flow_screen.dart';
+
+/// Four native cores (tracking, sensors, workout and challenge) link in one
+/// app. The first screen checks the first three; RealFlowScreen exercises the
+/// activity and challenge integrations.
 void main() {
   runApp(const SensorsDemo());
 }
@@ -53,6 +56,26 @@ class _SensorsDemoState extends State<SensorsDemo> {
   }
 
   @override
-  Widget build(BuildContext context) =>
-      MaterialApp(home: Scaffold(body: Center(child: Text(_status, key: const Key('status')))));
+  Widget build(BuildContext context) => MaterialApp(
+    home: Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_status, key: const Key('status')),
+            Builder(
+              builder: (context) => FilledButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const RealFlowScreen(),
+                  ),
+                ),
+                child: const Text('Open real sport flow'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }

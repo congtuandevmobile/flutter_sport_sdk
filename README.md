@@ -12,9 +12,9 @@ Start with [the source summary](doc/SOURCE_SUMMARY.md) for the package map, comp
 | [`packages/flutter_challenge/challenge-core`](packages/flutter_challenge/challenge-core) | Kotlin core of a multi-stage challenge: event-sourced engine, stage counters, journal with CRC and recovery | new |
 | [`flutter_challenge`](packages/flutter_challenge) | A challenge session (Android/iOS native, journal on disk) on top of `challenge-core`; works without Bluetooth | new, beta, used by `multisport_demo` |
 | [`flutter_activity`](packages/flutter_activity) | Record one activity from the sensors (heart rate, cadence, speed, distance with the time each was measured), keep the history durably, summarise it (averages, pace, how much each sensor covered). Pure Dart | new, beta, not tested with real devices |
-| [`flutter_multisport`](packages/flutter_multisport) | Multisport challenges above `flutter_challenge`: a sport catalog (distance, time or repetitions per stage), a coordinator that runs the stages, per-stage telemetry and results. Pure Dart | new, beta, not tested with real sensors |
+| [`flutter_multisport`](packages/flutter_multisport) | Multisport challenges above `flutter_challenge`: runtime sport profiles and a saved `SportPlan`, stage coordination, telemetry and results. Pure Dart | new, beta, not tested with real sensors |
 | [`flutter_tracking_gps_adapter`](packages/flutter_tracking_gps_adapter) | Optional GPS source for `flutter_activity` or `flutter_multisport`; no BLE dependency | new, beta |
-| [`flutter_sport_ble_adapter`](packages/flutter_sport_ble_adapter) | Optional per-device BLE source for `flutter_activity` or `flutter_multisport`; no GPS dependency | new, beta |
+| [`flutter_sport_ble_adapter`](packages/flutter_sport_ble_adapter) | Optional per-device counter and resolver-selected BLE telemetry for `flutter_activity` or `flutter_multisport`; no GPS dependency | new, beta |
 | [`flutter_multisport_adapters`](packages/flutter_multisport_adapters) | Compatibility bundle exporting both optional adapters | new, beta |
 | [`flutter_sport_ble`](packages/flutter_sport_ble) | Bluetooth LE sport sensors: several devices at once, one resolved value per metric | new, beta |
 | [`packages/flutter_sport_ble/sensor-core`](packages/flutter_sport_ble/sensor-core) | Kotlin core of the sensors: protocol registry and adapters (heart rate, running and cycling speed/cadence, cycling power, fitness machines, battery, device information), per-metric resolver with a source policy | new |
@@ -33,6 +33,8 @@ packages/flutter_workout/tool/build_core.sh debug          # same for the workou
 ```
 
 See [CLAUDE.md](CLAUDE.md) for the rules of the repository.
+
+The [sensors demo](examples/sensors_demo) has a reference host flow for GPS activity, optional BLE telemetry, a run → manual swim → strength challenge, and saved history. It is an integration example; physical GPS/BLE behavior still needs device testing.
 
 Continuous integration lives in `.github/workflows/` (sensor core, Flutter packages, Android and iOS native tests, the two-plugin
 integration check). They were written here and have not run on GitHub yet.

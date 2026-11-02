@@ -7,6 +7,7 @@ It sits ABOVE `flutter_challenge` (and uses `flutter_activity` for the telemetry
 | Piece | What it does |
 |---|---|
 | `SportCatalog` | Which sports exist, which goals each one can end on, how its distance is counted, which source usually feeds it. The "create challenge" form is made from it, and it turns a `SportStageConfig` into a `flutter_challenge` stage. |
+| `SportPlan` | Versioned JSON for the host's sport profiles and stage choices, so a custom challenge can be restored after restart. |
 | `ChallengeCoordinator` | Starts the challenge, forwards the readings of the sources, tells the app when a stage starts or completes, moves to the next stage by hand or by itself, restores after the process died. |
 | `StageTelemetryRecorder` | Records heart rate, cadence, speed, power and strokes DURING each stage (durably) and builds a `StageResult` per stage. |
 | `package:flutter_multisport/testing.dart` | `FakeChallengePlatform`: a fake native side, to test your own screens. |
@@ -36,6 +37,40 @@ coordinator.events.listen((e) {
 });
 await coordinator.start(sessionId: 'session-1', stages: stages);
 ```
+
+The host can register any number of sports at runtime without changing the enum:
+
+```dart
+final plan = SportPlan(
+  id: 'my-race',
+  profiles: [
+    ...SportCatalog.standard().profiles,
+    const SportProfile.custom(
+      id: 'trail_run',
+      goals: {GoalType.distance, GoalType.duration},
+      distanceMetric: ProgressMetric.runMeters,
+      defaultSources: ['gps'],
+      telemetry: [TelemetryMetric.heartRate],
+    ),
+  ],
+  stages: [
+    const SportStageConfig.custom(
+      id: 'trail-1', sportId: 'trail_run',
+      goal: SportGoal.distanceMeters(1000), title: 'Trail run',
+    ),
+  ],
+);
+plan.validate();
+await File('plan.json').writeAsString(plan.encode());
+final restored = SportPlan.decode(await File('plan.json').readAsString());
+final coordinator = ChallengeCoordinator(
+  challenge: FlutterChallenge(), store: FileTelemetryStore(directory),
+  catalog: restored.catalog,
+);
+await coordinator.restore(sessionId: 'session-1', stages: restored.stages);
+```
+
+The app supplies progress and telemetry sources, permission prompts, device choice, UI and storage location. A custom distance sport maps to an existing native distance metric in metres; new units or metrics require a native contract change. See `examples/sensors_demo` for an app-owned flow.
 
 ## Sport, goal, source
 

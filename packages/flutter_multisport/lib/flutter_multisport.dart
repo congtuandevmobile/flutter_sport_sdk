@@ -6,5 +6,6 @@ export 'package:flutter_activity/flutter_activity.dart';
 export 'src/coordinator.dart';
 export 'src/sport.dart';
 export 'src/sport_catalog.dart';
+export 'src/sport_plan.dart';
 export 'src/telemetry.dart';
 export 'src/telemetry_recorder.dart';

@@ -99,6 +99,10 @@ class StageTelemetryRecorder {
         if (!SportType.values.any((s) => s.name == decoded['sport'])) {
           return null;
         }
+        if (decoded['sid'] != null && decoded['sid'] is! String) return null;
+        if (decoded['title'] != null && decoded['title'] is! String) {
+          return null;
+        }
         if (!GoalType.values.any((g) => g.name == decoded['gt'])) return null;
         final goal = decoded['gv'];
         if (goal is! num || !goal.isFinite || goal <= 0) return null;
@@ -194,13 +198,22 @@ class StageTelemetryRecorder {
     _closeOpen(at);
     _current = index;
     _stageRunning = true;
-    _stages[index] = _Stage(config.id, config.sport, config.goal, at);
+    _stages[index] = _Stage(
+      config.id,
+      config.sport,
+      config.effectiveSportId,
+      config.title,
+      config.goal,
+      at,
+    );
     if (!_paused) _openInterval(index, at);
     _write({
       'k': 'start',
       'i': index,
       'id': config.id,
       'sport': config.sport.name,
+      'sid': config.effectiveSportId,
+      'title': config.title,
       'gt': config.goal.type.name,
       'gv': config.goal.value,
       't': at.millisecondsSinceEpoch,
@@ -280,6 +293,8 @@ class StageTelemetryRecorder {
       index: index,
       stageId: stage.id,
       sport: stage.sport,
+      sportId: stage.sportId,
+      title: stage.title,
       goal: stage.goal,
       startedAt: stage.startedAt,
       endedAt: stage.endedAt,
@@ -395,7 +410,14 @@ class StageTelemetryRecorder {
         _current = index;
         _stageRunning = true;
         _paused = false;
-        _stages[index] = _Stage(r['id'] as String, sport, goal, at());
+        _stages[index] = _Stage(
+          r['id'] as String,
+          sport,
+          (r['sid'] as String?) ?? sport.name,
+          r['title'] as String?,
+          goal,
+          at(),
+        );
         _openInterval(index, at());
       case 'end':
         final index = (r['i'] as num).toInt();
@@ -439,9 +461,18 @@ class StageTelemetryRecorder {
 }
 
 class _Stage {
-  _Stage(this.id, this.sport, this.goal, this.startedAt);
+  _Stage(
+    this.id,
+    this.sport,
+    this.sportId,
+    this.title,
+    this.goal,
+    this.startedAt,
+  );
   final String id;
   final SportType sport;
+  final String sportId;
+  final String? title;
   final SportGoal goal;
   final DateTime startedAt;
   DateTime? endedAt;

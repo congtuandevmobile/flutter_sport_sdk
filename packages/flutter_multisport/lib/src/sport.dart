@@ -2,7 +2,16 @@ import 'package:meta/meta.dart';
 
 /// The sports a challenge stage can be about. A sport is NOT a device and NOT a goal: the same sport can end on a distance or on a
 /// time, and the same device can serve several sports.
-enum SportType { running, walking, cycling, swimming, rowing, football, strength, custom }
+enum SportType {
+  running,
+  walking,
+  cycling,
+  swimming,
+  rowing,
+  football,
+  strength,
+  custom,
+}
 
 /// What ends a stage.
 enum GoalType {
@@ -42,13 +51,17 @@ enum TransitionPolicy {
 class SportGoal {
   const SportGoal._(this.type, this.value);
 
-  const SportGoal.distanceMeters(double meters) : this._(GoalType.distance, meters);
+  const SportGoal.distanceMeters(double meters)
+    : this._(GoalType.distance, meters);
 
-  factory SportGoal.distanceKm(double kilometers) => SportGoal.distanceMeters(kilometers * 1000);
+  factory SportGoal.distanceKm(double kilometers) =>
+      SportGoal.distanceMeters(kilometers * 1000);
 
-  SportGoal.duration(Duration time) : this._(GoalType.duration, time.inMilliseconds / 1000.0);
+  SportGoal.duration(Duration time)
+    : this._(GoalType.duration, time.inMilliseconds / 1000.0);
 
-  const SportGoal.repetitions(int count) : this._(GoalType.repetitions, count * 1.0);
+  const SportGoal.repetitions(int count)
+    : this._(GoalType.repetitions, count * 1.0);
 
   final GoalType type;
 
@@ -56,7 +69,8 @@ class SportGoal {
   final double value;
 
   @override
-  bool operator ==(Object other) => other is SportGoal && other.type == type && other.value == value;
+  bool operator ==(Object other) =>
+      other is SportGoal && other.type == type && other.value == value;
 
   @override
   int get hashCode => Object.hash(type, value);
@@ -71,6 +85,7 @@ class SportStageConfig {
   const SportStageConfig({
     required this.id,
     required this.sport,
+    this.sportId,
     required this.goal,
     this.sources,
     this.completion = StageCompletion.automatic,
@@ -78,9 +93,25 @@ class SportStageConfig {
     this.title,
   });
 
+  /// A host-defined sport registered in [SportCatalog].
+  const SportStageConfig.custom({
+    required this.id,
+    required this.sportId,
+    required this.goal,
+    this.sources,
+    this.completion = StageCompletion.automatic,
+    this.transition = TransitionPolicy.waitForUser,
+    this.title,
+  }) : assert(sportId != null && sportId != ''),
+       sport = SportType.custom;
+
   /// Unique inside the challenge.
   final String id;
   final SportType sport;
+
+  /// Null for a built-in sport; otherwise the registered profile ID.
+  final String? sportId;
+  String get effectiveSportId => sportId ?? sport.name;
   final SportGoal goal;
 
   /// The ids of the sources that may advance this stage, in order (see the sticky rule of `flutter_challenge`). Null: the catalog's

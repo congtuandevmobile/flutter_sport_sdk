@@ -1,5 +1,7 @@
 ## 0.0.1-beta
 
+Add runtime sport IDs and profiles, versioned `SportPlan` serialization, and custom sport labels in per-stage results and restored telemetry.
+
 Stage telemetry restore now keeps a nondecreasing recovery boundary and repairs malformed records. `ChallengeCoordinator.stageSamples()` and `stageSeries()` expose per-stage replay data, with `telemetryRestoreStatus` and `flushTelemetry()` for persistence checks.
 
 `confirmed` stages now reject an early confirmation; automatic next-stage transitions wait through a pause. Add `addProgress()` for manually measured metres or repetitions, while keeping `addRepetitions()`.

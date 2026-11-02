@@ -1,5 +1,7 @@
 PODS:
   - Flutter (1.0.0)
+  - flutter_challenge (0.0.1-beta):
+    - Flutter
   - flutter_sport_ble (0.0.1-beta):
     - Flutter
   - flutter_tracking_gps (0.0.1-beta.3):
@@ -9,6 +11,7 @@ PODS:
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
+  - flutter_challenge (from `.symlinks/plugins/flutter_challenge/ios`)
   - flutter_sport_ble (from `.symlinks/plugins/flutter_sport_ble/ios`)
   - flutter_tracking_gps (from `.symlinks/plugins/flutter_tracking_gps/ios`)
   - flutter_workout (from `.symlinks/plugins/flutter_workout/ios`)
@@ -16,6 +19,8 @@ DEPENDENCIES:
 EXTERNAL SOURCES:
   Flutter:
     :path: Flutter
+  flutter_challenge:
+    :path: ".symlinks/plugins/flutter_challenge/ios"
   flutter_sport_ble:
     :path: ".symlinks/plugins/flutter_sport_ble/ios"
   flutter_tracking_gps:
@@ -25,6 +30,7 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  flutter_challenge: d1a2901615f131f8f73728d043b1c6a018fd86aa
   flutter_sport_ble: 1e7aac7fe36f318da26aef7c83d856798297a8d3
   flutter_tracking_gps: 00ea05c1156645d5055f2f65b98a02901a45c99e
   flutter_workout: 8345fc91166a57583ecb9a910f4b7bd24aab00a9

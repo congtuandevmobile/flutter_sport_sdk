@@ -47,16 +47,18 @@ Scope: turn a user's choice (a sport and a goal per stage) into a challenge, run
 | Invariant | Evidence |
 |---|---|
 | A config that cannot become a stage is refused with every problem named; a sport with no standard source needs a source or manual completion | `sport_catalog_test.dart` |
+| Multiple host-defined sports can have distinct IDs/goals/sources and their plan survives JSON restore | `sport_catalog_test.dart`, `sport_plan_test.dart` |
 | Running 1 km -> Football 10 min -> Cycling 2 km becomes the right metrics, targets and sources | `sport_catalog_test.dart` |
 | A stage that completes is announced once; the next stage waits for the user or starts by itself, as configured; a repeated snapshot repeats nothing | `coordinator_test.dart` (against a FAKE native side) |
 | A sample belongs to the stage it was MADE in (late arrival included); a pause and the dead time are not stage time; a missing sensor is `null`, not 0 | `coordinator_test.dart` |
 | The telemetry is on the store and survives a restart | `coordinator_test.dart` (file store, simulated crash) |
+| Per-stage result retains a custom sport ID/title after telemetry restore | `telemetry_recorder_test.dart` |
 | Adapters send what a device says (not the resolved value), with epoch and age, and never repeat a measurement | `adapters_test.dart` |
 | A repeated BLE snapshot never duplicates a sample (jittering wall clock) | `adapters_test.dart` (`repeatedBleSnapshotMustNotDuplicateSample`) |
 | The sources of a previous session do not feed a new one after `detachSources()`; a repeated measurement is recorded once per stage; a counter is not bridged across a pause inside a stage | `coordinator_test.dart` |
 | The demo creates, runs and shows the results (stages can be moved with buttons: no deprecated drag-list callback) | `demo_test.dart` (widget tests, fake native side) |
 
-Not proven: anything with a real native side end to end across the four SDKs, real sensors, a swimming source, restore after the process died on a device.
+The `sensors_demo` wiring test connects simulated GPS and selected BLE to activity and challenge history. Not proven: real sensors or a swimming counter, restore after process death on a device, or full UI use on a device.
 
 ## flutter_tracking_gps, flutter_sport_ble
 
@@ -66,8 +68,8 @@ No change in this round. Their quality gates are real-device evidence (distance 
 
 | Gate | Status |
 |---|---|
-| Four plugins in one app (Run -> Sled -> Row -> Run) built and run | NOT RUN (`sensors_demo` has no `flutter_challenge`) |
-| Four Kotlin/Native frameworks link in one iOS app | NOT RUN |
+| Four plugins in one app: GPS/BLE/workout/challenge Android debug build | PASS (`sensors_demo` `assembleDebug`); device run NOT RUN |
+| Four Kotlin/Native frameworks link in one iOS app | PASS (`sensors_demo` iOS simulator build); device run NOT RUN |
 | `release_check.sh <package> both` on the real publish artifact | NOT RUN |
 | Hardware compatibility matrix | NOT RUN (`verified: false`) |
 
@@ -97,3 +99,5 @@ Fill the date, the command and the result of each run here.
 | 2026-10-30 | `flutter build ios --simulator --debug --no-codesign` and `xcodebuild test` for flutter_tracking_gps/example on iPhone 16 Pro simulator | PASS; 60 XCTest. The iOS CI workflow now includes this previously omitted suite. |
 | 2026-10-30 | `flutter build ios --simulator --debug --no-codesign` for examples/multisport_demo | PASS; simulator app built with flutter_challenge. Build does not establish real-device behavior. |
 | 2026-10-30 | examples/sensors_demo: Android `:app:processDebugMainManifest assembleDebug`, merged-manifest assertions (fine location without maxSdkVersion; BLE scan/connect present), and `flutter build ios --simulator --debug --no-codesign` | PASS; GPS, BLE and workout link in the iOS simulator app. Used cached Gradle 8.13 for Android. |
+| 2026-10-31 | `flutter test --reporter compact` and `flutter analyze` in all nine Flutter packages and both demos (196 tests); sensors_demo tests rerun after final host-flow cleanup | PASS; new wiring test uses simulated GPS/BLE and fake challenge platform. All analyzers report no issues. |
+| 2026-10-31 | `flutter build ios --simulator --no-codesign --debug` for sensors_demo with GPS, BLE, workout and challenge; Android `assembleDebug` with cached Gradle 8.13 and JDK 17 | PASS; app built for simulator and Android debug APK, not launched on hardware. |

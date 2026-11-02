@@ -1,4 +1,5 @@
-import 'package:flutter_challenge/flutter_challenge.dart' show CompletionEvidence;
+import 'package:flutter_challenge/flutter_challenge.dart'
+    show CompletionEvidence;
 import 'package:meta/meta.dart';
 
 import 'package:flutter_activity/flutter_activity.dart';
@@ -12,6 +13,8 @@ class StageResult {
     required this.index,
     required this.stageId,
     required this.sport,
+    this.sportId,
+    this.title,
     required this.goal,
     required this.startedAt,
     required this.endedAt,
@@ -26,6 +29,11 @@ class StageResult {
   final int index;
   final String stageId;
   final SportType sport;
+
+  /// Registered profile ID, including host-defined sports.
+  final String? sportId;
+  final String? title;
+  String get displayName => title ?? sportId ?? sport.name;
   final SportGoal goal;
   final DateTime? startedAt;
   final DateTime? endedAt;
@@ -56,5 +64,6 @@ class StageResult {
   double? get strokeCount => stats[TelemetryMetric.strokeCount]?.total;
 
   /// For a distance goal: the metres covered. Null for another goal.
-  double? get distanceMeters => goal.type == GoalType.distance ? progress : null;
+  double? get distanceMeters =>
+      goal.type == GoalType.distance ? progress : null;
 }

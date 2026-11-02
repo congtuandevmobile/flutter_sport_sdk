@@ -8,13 +8,27 @@ import 'sport.dart';
 class SportProfile {
   const SportProfile({
     required this.sport,
+    this.id,
     required this.goals,
     this.distanceMetric,
     this.defaultSources = const [],
     this.telemetry = const [],
   });
 
+  /// A host-defined sport. Distance goals reuse a native distance metric with
+  /// compatible units; duration and repetition goals need no new native code.
+  const SportProfile.custom({
+    required this.id,
+    required this.goals,
+    this.distanceMetric,
+    this.defaultSources = const [],
+    this.telemetry = const [],
+  }) : assert(id != null && id != ''),
+       sport = SportType.custom;
+
   final SportType sport;
+  final String? id;
+  String get sportId => id ?? sport.name;
 
   /// The goal types a user may pick for this sport (the form of the "create challenge" screen is made from this).
   final Set<GoalType> goals;
@@ -44,7 +58,48 @@ class SportConfigException implements Exception {
 /// stage. The core of the challenge knows goals and measurements, not sports: this catalog is the only place that knows which metric
 /// counts a sport.
 class SportCatalog {
-  SportCatalog(Iterable<SportProfile> profiles) : _profiles = {for (final p in profiles) p.sport: p};
+  factory SportCatalog(Iterable<SportProfile> profiles) {
+    final byId = <String, SportProfile>{};
+    for (final profile in profiles) {
+      final id = profile.sportId;
+      if (id.trim().isEmpty || byId.containsKey(id)) {
+        throw ArgumentError.value(
+          id,
+          'profiles',
+          'sport IDs must be nonempty and unique',
+        );
+      }
+      if (profile.sport == SportType.custom &&
+          id != SportType.custom.name &&
+          SportType.values.any((sport) => sport.name == id)) {
+        throw ArgumentError.value(
+          id,
+          'profiles',
+          'a custom sport cannot replace a built-in sport',
+        );
+      }
+      const distanceMetrics = {
+        ProgressMetric.runMeters,
+        ProgressMetric.rowMeters,
+        ProgressMetric.skiMeters,
+        ProgressMetric.sledMeters,
+        ProgressMetric.swimMeters,
+        ProgressMetric.cycleMeters,
+      };
+      if (profile.distanceMetric != null &&
+          !distanceMetrics.contains(profile.distanceMetric)) {
+        throw ArgumentError.value(
+          profile.distanceMetric,
+          'profiles',
+          'distance goals need a distance metric',
+        );
+      }
+      byId[id] = profile;
+    }
+    return SportCatalog._(byId);
+  }
+
+  SportCatalog._(this._profiles);
 
   /// Running, walking, cycling, swimming, rowing, football, strength and a custom sport.
   ///
@@ -56,21 +111,34 @@ class SportCatalog {
       goals: {GoalType.distance, GoalType.duration},
       distanceMetric: ProgressMetric.runMeters,
       defaultSources: ['gps'],
-      telemetry: [TelemetryMetric.heartRate, TelemetryMetric.cadence, TelemetryMetric.speed],
+      telemetry: [
+        TelemetryMetric.heartRate,
+        TelemetryMetric.cadence,
+        TelemetryMetric.speed,
+      ],
     ),
     SportProfile(
       sport: SportType.walking,
       goals: {GoalType.distance, GoalType.duration},
       distanceMetric: ProgressMetric.runMeters,
       defaultSources: ['gps'],
-      telemetry: [TelemetryMetric.heartRate, TelemetryMetric.cadence, TelemetryMetric.speed],
+      telemetry: [
+        TelemetryMetric.heartRate,
+        TelemetryMetric.cadence,
+        TelemetryMetric.speed,
+      ],
     ),
     SportProfile(
       sport: SportType.cycling,
       goals: {GoalType.distance, GoalType.duration},
       distanceMetric: ProgressMetric.cycleMeters,
       defaultSources: ['gps'],
-      telemetry: [TelemetryMetric.heartRate, TelemetryMetric.cadence, TelemetryMetric.power, TelemetryMetric.speed],
+      telemetry: [
+        TelemetryMetric.heartRate,
+        TelemetryMetric.cadence,
+        TelemetryMetric.power,
+        TelemetryMetric.speed,
+      ],
     ),
     SportProfile(
       sport: SportType.swimming,
@@ -82,7 +150,12 @@ class SportCatalog {
       sport: SportType.rowing,
       goals: {GoalType.distance, GoalType.duration},
       distanceMetric: ProgressMetric.rowMeters,
-      telemetry: [TelemetryMetric.heartRate, TelemetryMetric.cadence, TelemetryMetric.power, TelemetryMetric.strokeCount],
+      telemetry: [
+        TelemetryMetric.heartRate,
+        TelemetryMetric.cadence,
+        TelemetryMetric.power,
+        TelemetryMetric.strokeCount,
+      ],
     ),
     SportProfile(
       sport: SportType.football,
@@ -94,46 +167,89 @@ class SportCatalog {
     SportProfile(
       sport: SportType.strength,
       goals: {GoalType.duration, GoalType.repetitions},
-      defaultSources: ['manual'], // repetitions are counted by hand (`ChallengeCoordinator.addRepetitions`) unless the app names a counter
+      defaultSources: [
+        'manual',
+      ], // repetitions are counted by hand (`ChallengeCoordinator.addRepetitions`) unless the app names a counter
       telemetry: [TelemetryMetric.heartRate],
     ),
-    SportProfile(sport: SportType.custom, goals: {GoalType.duration, GoalType.repetitions}, defaultSources: ['manual']),
+    SportProfile(
+      sport: SportType.custom,
+      goals: {GoalType.duration, GoalType.repetitions},
+      defaultSources: ['manual'],
+    ),
   ]);
 
-  final Map<SportType, SportProfile> _profiles;
+  final Map<String, SportProfile> _profiles;
+
+  /// All registered profiles, including host-defined sports.
+  List<SportProfile> get profiles => List.unmodifiable(_profiles.values);
+
+  SportProfile? profileOfId(String sportId) => _profiles[sportId];
+
+  List<GoalType> goalsOfId(String sportId) => [
+    for (final g in GoalType.values)
+      if (_profiles[sportId]?.goals.contains(g) ?? false) g,
+  ];
 
   /// The sports a user can pick, in the order of [SportType].
-  List<SportType> get sports => [for (final s in SportType.values) if (_profiles.containsKey(s)) s];
+  List<SportType> get sports => [
+    for (final s in SportType.values)
+      if (_profiles.containsKey(s.name)) s,
+  ];
 
-  SportProfile? profileOf(SportType sport) => _profiles[sport];
+  SportProfile? profileOf(SportType sport) => _profiles[sport.name];
 
   /// The goal types the user may pick for [sport] (empty for an unknown sport).
-  List<GoalType> goalsOf(SportType sport) => [for (final g in GoalType.values) if (_profiles[sport]?.goals.contains(g) ?? false) g];
+  List<GoalType> goalsOf(SportType sport) => goalsOfId(sport.name);
 
   /// What is wrong with [config] (empty when it can become a stage).
   List<String> validate(SportStageConfig config) {
     final problems = <String>[];
     if (config.id.trim().isEmpty) problems.add('the stage id is empty');
-    final profile = _profiles[config.sport];
-    if (profile == null) return [...problems, '${config.sport.name} is not in the catalog'];
-    final goal = config.goal;
-    if (!profile.goals.contains(goal.type)) problems.add('${config.sport.name} has no ${goal.type.name} goal');
-    if (!goal.value.isFinite || goal.value <= 0) problems.add('the goal must be more than 0');
-    if (goal.type == GoalType.repetitions && goal.value != goal.value.roundToDouble()) problems.add('repetitions must be a whole number');
-    if (goal.type != GoalType.duration && config.completion != StageCompletion.manualOnly && _sourcesOf(config, profile).isEmpty) {
-      problems.add('${config.sport.name} has no default source: name one in `sources`, or complete the stage by hand (manualOnly)');
+    final sportId = config.effectiveSportId;
+    if (sportId.trim().isEmpty) problems.add('the sport id is empty');
+    final profile = _profiles[sportId];
+    if (profile == null) return [...problems, '$sportId is not in the catalog'];
+    if (profile.sport != config.sport) {
+      problems.add(
+        '$sportId is registered as ${profile.sport.name}, not ${config.sport.name}',
+      );
     }
-    if ((config.sources ?? const []).any((s) => s.trim().isEmpty)) problems.add('a source id is empty');
+    final goal = config.goal;
+    if (!profile.goals.contains(goal.type)) {
+      problems.add('$sportId has no ${goal.type.name} goal');
+    }
+    if (goal.type == GoalType.distance && profile.distanceMetric == null) {
+      problems.add('$sportId has no distance metric');
+    }
+    if (!goal.value.isFinite || goal.value <= 0) {
+      problems.add('the goal must be more than 0');
+    }
+    if (goal.type == GoalType.repetitions &&
+        goal.value != goal.value.roundToDouble()) {
+      problems.add('repetitions must be a whole number');
+    }
+    if (goal.type != GoalType.duration &&
+        config.completion != StageCompletion.manualOnly &&
+        _sourcesOf(config, profile).isEmpty) {
+      problems.add(
+        '$sportId has no default source: name one in `sources`, or complete the stage by hand (manualOnly)',
+      );
+    }
+    if ((config.sources ?? const []).any((s) => s.trim().isEmpty)) {
+      problems.add('a source id is empty');
+    }
     return problems;
   }
 
-  List<String> _sourcesOf(SportStageConfig config, SportProfile profile) => config.sources ?? profile.defaultSources;
+  List<String> _sourcesOf(SportStageConfig config, SportProfile profile) =>
+      config.sources ?? profile.defaultSources;
 
   /// The `flutter_challenge` stage of [config]. Throws [SportConfigException] when it cannot be one.
   StageDefinition stageDefinitionOf(SportStageConfig config) {
     final problems = validate(config);
     if (problems.isNotEmpty) throw SportConfigException(problems);
-    final profile = _profiles[config.sport]!;
+    final profile = _profiles[config.effectiveSportId]!;
     switch (config.goal.type) {
       case GoalType.duration:
         return StageDefinition(
@@ -141,7 +257,9 @@ class SportCatalog {
           metric: ProgressMetric.duration,
           target: config.goal.value,
           // a time reaches its target by itself; `confirmed` and `manualOnly` both wait for the user once it is reached
-          policy: config.completion == StageCompletion.automatic ? CompletionPolicy.auto : CompletionPolicy.manual,
+          policy: config.completion == StageCompletion.automatic
+              ? CompletionPolicy.auto
+              : CompletionPolicy.manual,
           allowedSources: const {},
         );
       case GoalType.distance:
@@ -149,7 +267,9 @@ class SportCatalog {
         final sources = _sourcesOf(config, profile);
         return StageDefinition(
           id: config.id,
-          metric: config.goal.type == GoalType.distance ? profile.distanceMetric! : ProgressMetric.reps,
+          metric: config.goal.type == GoalType.distance
+              ? profile.distanceMetric!
+              : ProgressMetric.reps,
           target: config.goal.value,
           policy: switch (config.completion) {
             StageCompletion.automatic => CompletionPolicy.auto,
@@ -176,7 +296,9 @@ class SportCatalog {
       for (final p in validate(stages[i])) {
         problems.add('stage ${i + 1}: $p');
       }
-      if (!seen.add(stages[i].id)) problems.add('stage ${i + 1}: the id "${stages[i].id}" is used twice');
+      if (!seen.add(stages[i].id)) {
+        problems.add('stage ${i + 1}: the id "${stages[i].id}" is used twice');
+      }
     }
     if (problems.isNotEmpty) throw SportConfigException(problems);
     return ChallengeDefinition(

@@ -9,6 +9,26 @@ void main() {
     goal: SportGoal.distanceMeters(1000),
   );
 
+  test('custom sport ID and display name survive telemetry restore', () async {
+    final store = MemoryTelemetryStore();
+    final recorder = await StageTelemetryRecorder.begin(store, 'custom');
+    recorder.markStageStarted(
+      0,
+      const SportStageConfig.custom(
+        id: 'paddle',
+        sportId: 'paddleboard',
+        title: 'Lake paddle',
+        goal: SportGoal.distanceMeters(500),
+      ),
+      start,
+    );
+    recorder.markStageEnded(0, start.add(const Duration(minutes: 5)));
+    await recorder.flush();
+    final restored = await StageTelemetryRecorder.restore(store, 'custom');
+    expect(restored.resultFor(0).sportId, 'paddleboard');
+    expect(restored.resultFor(0).displayName, 'Lake paddle');
+  });
+
   test(
     'late telemetry does not move a restored stage behind its resume',
     () async {

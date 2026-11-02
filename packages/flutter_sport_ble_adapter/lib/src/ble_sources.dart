@@ -113,3 +113,57 @@ class BleTelemetrySource implements TelemetrySource {
     }
   }
 }
+
+/// Records the BLE resolver's ONE selected device per metric. Use this when the
+/// app connects several heart-rate straps or cadence sensors and wants the
+/// same selected values in its live view, activity history and stage results.
+/// [BleTelemetrySource] remains available for a deliberately chosen device.
+class ResolvedBleTelemetrySource implements TelemetrySource {
+  ResolvedBleTelemetrySource({
+    required Stream<SensorSnapshot> snapshots,
+    Map<SportMetric, TelemetryMetric>? mapping,
+    DateTime Function()? clock,
+  }) : mapping = mapping ?? BleTelemetrySource.defaultMapping,
+       _clock = clock ?? DateTime.now {
+    _samples = snapshots.expand(_samplesOf).asBroadcastStream();
+  }
+
+  final Map<SportMetric, TelemetryMetric> mapping;
+  final DateTime Function() _clock;
+  late final Stream<TelemetrySample> _samples;
+  final _lastReceived = <SportMetric, (String, int, int)>{};
+  DateTime? _anchor;
+
+  @override
+  Stream<TelemetrySample> get samples => _samples;
+
+  Iterable<TelemetrySample> _samplesOf(SensorSnapshot snapshot) sync* {
+    final candidate = _clock().subtract(
+      Duration(milliseconds: snapshot.updatedAtMs),
+    );
+    if (_anchor == null ||
+        candidate.difference(_anchor!).abs() > const Duration(seconds: 2)) {
+      _anchor = candidate;
+    }
+    for (final entry in mapping.entries) {
+      final value = snapshot[entry.key];
+      if (value == null) continue;
+      final device = snapshot.devices.where((d) => d.id == value.sourceId);
+      if (device.isEmpty) {
+        continue; // a value without a known connection cannot be replayed safely
+      }
+      final epoch = device.first.epoch;
+      final received = snapshot.updatedAtMs - value.age.inMilliseconds;
+      final key = (value.sourceId, epoch, received);
+      if (_lastReceived[entry.key] == key) continue;
+      _lastReceived[entry.key] = key;
+      yield TelemetrySample(
+        metric: entry.value,
+        value: value.value,
+        at: _anchor!.add(Duration(milliseconds: received)),
+        sourceId: value.sourceId,
+        epoch: epoch,
+      );
+    }
+  }
+}
