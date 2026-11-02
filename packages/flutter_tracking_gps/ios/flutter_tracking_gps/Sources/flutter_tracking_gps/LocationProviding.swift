@@ -114,7 +114,7 @@ final class CoreLocationProvider: NSObject, LocationProviding, CLLocationManager
 /// prompts and status are what the app already handles); only the location stream changes.
 ///
 /// `CLBackgroundActivitySession` keeps the app collecting in the background (and, per Apple, lets the system continue
-/// the sequence across a system termination); on iOS 18 a `CLServiceSession` is held for the recording's lifetime. If
+/// the sequence across a system termination). If
 /// the app is terminated and relaunched, the session must be recreated IMMEDIATELY at launch: the engine's recovery
 /// (`FlutterTrackingGpsRuntime.bootstrapAtLaunch`) does that by calling `startUpdates` again.
 ///
