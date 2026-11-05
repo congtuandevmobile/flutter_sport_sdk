@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
+		331C808C294A63AB00263BE5 /* flutter-challenge in Frameworks */ = {isa = PBXBuildFile; productRef = 78A318212AECB46A00862997 /* flutter-challenge */; };
 		3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */; };
 		690965836B2AAF28777AD42F /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4F2260FED681D601793A6D5A /* Pods_RunnerTests.framework */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
@@ -78,6 +79,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				331C808C294A63AB00263BE5 /* flutter-challenge in Frameworks */,
 				690965836B2AAF28777AD42F /* Pods_RunnerTests.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -194,6 +196,9 @@
 				331C8086294A63A400263BE5 /* PBXTargetDependency */,
 			);
 			name = RunnerTests;
+			packageProductDependencies = (
+				78A318212AECB46A00862997 /* flutter-challenge */,
+			);
 			productName = RunnerTests;
 			productReference = 331C8081294A63A400263BE5 /* RunnerTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -253,6 +258,7 @@
 			mainGroup = 97C146E51CF9000F007C117D;
 			packageReferences = (
 				781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage" */,
+				781AD8BD2B33823900A9FFBB /* XCLocalSwiftPackageReference "flutter_challenge" */,
 			);
 			productRefGroup = 97C146EF1CF9000F007C117D /* Products */;
 			projectDirPath = "";
@@ -732,12 +738,21 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage;
 		};
+		781AD8BD2B33823900A9FFBB /* XCLocalSwiftPackageReference "flutter_challenge" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../ios/flutter_challenge;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = FlutterGeneratedPluginSwiftPackage;
+		};
+		78A318212AECB46A00862997 /* flutter-challenge */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 781AD8BD2B33823900A9FFBB /* XCLocalSwiftPackageReference "flutter_challenge" */;
+			productName = "flutter-challenge";
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
