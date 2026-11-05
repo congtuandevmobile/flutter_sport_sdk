@@ -1,0 +1,8 @@
+framework module "SensorCore" {
+    umbrella header "SensorCore.h"
+
+    export *
+    module * { export * }
+
+    use Foundation
+}

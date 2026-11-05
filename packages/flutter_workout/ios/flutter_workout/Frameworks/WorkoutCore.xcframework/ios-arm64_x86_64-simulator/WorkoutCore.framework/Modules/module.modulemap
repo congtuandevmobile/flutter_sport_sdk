@@ -1,0 +1,5 @@
+framework module "WorkoutCore" {
+    umbrella header "WorkoutCore.h"
+    export *
+    module * { export * }
+}
