@@ -246,7 +246,10 @@ final class RunnerTests: XCTestCase {
             out = result
             done.fulfill()
         }
-        wait(for: [done], timeout: 5)
+        // CI simulators can take several seconds to schedule the serial engine/store
+        // queues after an XCTest process starts. Keep the test deterministic without
+        // changing production completion semantics.
+        wait(for: [done], timeout: 15)
         return try XCTUnwrap(out).get()
     }
 

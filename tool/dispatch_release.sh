@@ -156,19 +156,23 @@ if (( ${#new_packages[@]} > 0 )); then
   done
 
   # Verify from the tracked snapshot, not from the ignored local build output.
-  # This proves the archive uploaded by the tag workflow contains the native binary.
-  for package in "${new_packages[@]}"; do
-    if "$manifest" is-native "$package"; then
-      dry_run_log="$(mktemp)"
-      (cd "packages/$package" && flutter pub publish --dry-run) 2>&1 | tee "$dry_run_log"
-      framework_name="$(basename "$("$manifest" framework-path "$package")")"
-      grep -Fq "$framework_name" "$dry_run_log" || {
-        echo "$framework_name is missing from the $package publish archive." >&2
-        exit 1
-      }
-      rm -f "$dry_run_log"
-    fi
-  done
+  # A tag-only snapshot is intentionally not published to pub.dev, so do not run
+  # pub publish validation in that mode (it can fail on pub.dev release metadata
+  # such as CHANGELOG version entries even though tag creation is valid).
+  if [[ "$mode" == "release" ]]; then
+    for package in "${new_packages[@]}"; do
+      if "$manifest" is-native "$package"; then
+        dry_run_log="$(mktemp)"
+        (cd "packages/$package" && flutter pub publish --dry-run) 2>&1 | tee "$dry_run_log"
+        framework_name="$(basename "$("$manifest" framework-path "$package")")"
+        grep -Fq "$framework_name" "$dry_run_log" || {
+          echo "$framework_name is missing from the $package publish archive." >&2
+          exit 1
+        }
+        rm -f "$dry_run_log"
+      fi
+    done
+  fi
 fi
 
 push_tag() {
